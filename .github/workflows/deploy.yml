@@ -14,15 +14,12 @@ jobs:
           host: ${{ secrets.VPS_HOST }}
           username: polyagent
           key: ${{ secrets.VPS_SSH_KEY }}
-          envs: POLY_PROXY_URL
           script: |
             cd ~/app
             git pull origin main
             sed -i '/^POLY_CLOB_PROXY_URL/d' .env 2>/dev/null
             sed -i '/^POLY_PROXY_URL/d' .env 2>/dev/null
-            echo "POLY_PROXY_URL=$POLY_PROXY_URL" >> .env
+            echo 'POLY_PROXY_URL=${{ secrets.POLY_PROXY_URL }}' >> .env
             docker compose build --quiet
             docker compose up -d
             echo "✅ Deployed at $(date)"
-        env:
-          POLY_PROXY_URL: ${{ secrets.POLY_PROXY_URL }}
