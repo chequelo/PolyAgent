@@ -19,7 +19,8 @@ jobs:
             cd ~/app
             git pull origin main
             sed -i '/^POLY_CLOB_PROXY_URL/d' .env 2>/dev/null
-            grep -q POLY_PROXY_URL .env 2>/dev/null && sed -i "s|^POLY_PROXY_URL=.*|POLY_PROXY_URL=${POLY_PROXY_URL}|" .env || echo "POLY_PROXY_URL=${POLY_PROXY_URL}" >> .env
+            sed -i '/^POLY_PROXY_URL/d' .env 2>/dev/null
+            echo "POLY_PROXY_URL=$POLY_PROXY_URL" >> .env
             docker compose build --quiet
             docker compose up -d
             echo "✅ Deployed at $(date)"
