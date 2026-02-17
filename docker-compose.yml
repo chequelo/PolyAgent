@@ -1,0 +1,13 @@
+version: "3.9"
+
+services:
+  polyagent:
+    build: .
+    container_name: polyagent-v2
+    restart: unless-stopped
+    env_file: .env
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
