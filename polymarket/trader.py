@@ -5,7 +5,6 @@ from config import cfg
 logger = logging.getLogger("polyagent.pm.trader")
 
 _clob_client = None
-_region_blocked = None  # None = not checked, True/False = cached result
 
 PM_MIN_SIZE = 1.0     # Minimum $1 order on CLOB
 PM_MIN_PRICE = 0.01
@@ -28,34 +27,6 @@ def _get_client():
     return _clob_client
 
 
-def _check_region_access() -> bool:
-    """Check if CLOB API is accessible from this IP. Caches result."""
-    global _region_blocked
-    if _region_blocked is not None:
-        return not _region_blocked
-
-    client = _get_client()
-    if not client:
-        _region_blocked = True
-        return False
-
-    try:
-        # Lightweight call to test access
-        client.get_ok()
-        _region_blocked = False
-        logger.info("Polymarket CLOB access: OK")
-        return True
-    except Exception as e:
-        err = str(e).lower()
-        if "403" in err or "forbidden" in err or "region" in err:
-            _region_blocked = True
-            logger.warning(f"Polymarket CLOB geo-blocked: {e}")
-            return False
-        # Transient error — don't cache, allow retry
-        logger.warning(f"Polymarket CLOB access check failed (transient): {e}")
-        return False
-
-
 def _validate_order(price: float, size: float) -> str | None:
     """Validate order params. Returns error string or None if valid."""
     if price < PM_MIN_PRICE or price > PM_MAX_PRICE:
@@ -67,9 +38,6 @@ def _validate_order(price: float, size: float) -> str | None:
 
 async def execute_prediction_bet(market: dict, estimate: dict) -> dict:
     """Place a prediction market bet."""
-    if not _check_region_access():
-        return {"success": False, "error": "Region blocked (403)"}
-
     client = _get_client()
     if not client:
         return {"success": False, "error": "CLOB client not configured"}
@@ -112,9 +80,6 @@ async def execute_prediction_bet(market: dict, estimate: dict) -> dict:
 
 async def execute_arb(opportunity: dict) -> dict:
     """Execute YES+NO arbitrage: buy both sides."""
-    if not _check_region_access():
-        return {"success": False, "error": "Region blocked (403)"}
-
     client = _get_client()
     if not client:
         return {"success": False, "error": "CLOB client not configured"}

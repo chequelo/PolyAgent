@@ -279,10 +279,7 @@ async def scan_micro_arb() -> list[dict]:
 
 async def execute_micro_arb(opportunity: dict) -> dict:
     """Execute micro-arb via MAKER limit order on Polymarket."""
-    from polymarket.trader import _check_region_access, _get_client, _validate_order
-
-    if not _check_region_access():
-        return {"success": False, "error": "Region blocked (403)"}
+    from polymarket.trader import _get_client, _validate_order
 
     client = _get_client()
     if not client:

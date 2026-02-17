@@ -10,6 +10,19 @@
 
 const TARGET = "https://clob.polymarket.com";
 
+// Only forward headers that the CLOB API needs (auth + content).
+// Everything else (IP, geo, fingerprint headers) gets stripped.
+const ALLOWED_HEADERS = [
+  "content-type",
+  "accept",
+  "authorization",
+  "poly_address",
+  "poly_signature",
+  "poly_timestamp",
+  "poly_nonce",
+  "poly_api_key",
+];
+
 export default {
   async fetch(request) {
     const url = new URL(request.url);
@@ -22,31 +35,28 @@ export default {
     // Build target URL preserving path + query string
     const targetUrl = TARGET + url.pathname + url.search;
 
-    // Forward headers, excluding ones Cloudflare should set itself
-    const headers = new Headers(request.headers);
-    headers.delete("host");
-    headers.delete("cf-connecting-ip");
-    headers.delete("cf-ray");
-    headers.delete("cf-visitor");
-    headers.delete("cf-worker");
+    // Build clean headers — only pass auth and content headers
+    const cleanHeaders = new Headers();
+    for (const name of ALLOWED_HEADERS) {
+      const value = request.headers.get(name);
+      if (value) {
+        cleanHeaders.set(name, value);
+      }
+    }
 
-    // Forward the request
+    // Forward the request with clean headers
     const resp = await fetch(targetUrl, {
       method: request.method,
-      headers: headers,
+      headers: cleanHeaders,
       body: request.method !== "GET" && request.method !== "HEAD"
         ? request.body
         : undefined,
     });
 
-    // Return response with CORS headers for flexibility
-    const responseHeaders = new Headers(resp.headers);
-    responseHeaders.set("X-Proxy", "cf-worker");
-
     return new Response(resp.body, {
       status: resp.status,
       statusText: resp.statusText,
-      headers: responseHeaders,
+      headers: resp.headers,
     });
   },
 };
