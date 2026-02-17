@@ -21,7 +21,17 @@ def _patch_proxy():
     try:
         import httpx
         import py_clob_client.http_helpers.helpers as helpers
-        helpers._http_client = httpx.Client(proxy=cfg.poly_proxy_url, http2=True)
+        proxied = httpx.Client(proxy=cfg.poly_proxy_url, http2=True)
+
+        # Verify proxy works by checking our visible IP
+        try:
+            ip_resp = proxied.get("https://api.ipify.org?format=json")
+            proxy_ip = ip_resp.json().get("ip", "unknown")
+            logger.info(f"Proxy IP verified: {proxy_ip}")
+        except Exception as e:
+            logger.warning(f"Proxy IP check failed (continuing anyway): {e}")
+
+        helpers._http_client = proxied
         _proxy_patched = True
         logger.info(f"CLOB proxy patched → {cfg.poly_proxy_url.split('@')[-1]}")
     except Exception as e:
@@ -31,8 +41,15 @@ def _patch_proxy():
 def _get_client():
     global _clob_client
     if _clob_client is None and cfg.poly_private_key:
+        # Patch proxy BEFORE importing ClobClient to ensure the module-level
+        # _http_client is replaced before any code references it
         _patch_proxy()
         from py_clob_client.client import ClobClient
+        # Verify patch is still active after import
+        if _proxy_patched:
+            import py_clob_client.http_helpers.helpers as helpers
+            if not hasattr(helpers._http_client, '_transport'):
+                logger.warning("Proxy patch may have been overridden by ClobClient import")
         _clob_client = ClobClient(
             cfg.poly_clob_url,
             key=cfg.poly_private_key,

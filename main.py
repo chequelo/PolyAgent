@@ -178,10 +178,54 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/scan — Full scan (PM predictions + arbs + crypto)\n"
         "/crypto — Quick crypto scan (funding + spreads)\n"
         "/status — Balances and configuration\n"
+        "/proxytest — Test proxy and CLOB connectivity\n"
         "/help — This message\n\n"
         "Trades are executed automatically when opportunities are found.",
         parse_mode="Markdown",
     )
+
+
+async def cmd_proxytest(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Debug command: test proxy, IP, and CLOB connectivity."""
+    import httpx
+    lines = []
+
+    # 1. Direct IP (no proxy)
+    try:
+        direct_ip = httpx.get("https://api.ipify.org?format=json", timeout=10).json().get("ip")
+        lines.append(f"🌐 Direct IP: `{direct_ip}`")
+    except Exception as e:
+        lines.append(f"🌐 Direct IP: error ({e})")
+
+    # 2. Proxy config
+    lines.append(f"🔧 Proxy configured: {'✅' if cfg.poly_proxy_url else '❌'}")
+    if cfg.poly_proxy_url:
+        lines.append(f"🔧 Proxy host: `{cfg.poly_proxy_url.split('@')[-1]}`")
+
+    # 3. Proxy IP
+    if cfg.poly_proxy_url:
+        try:
+            proxy_ip = httpx.Client(proxy=cfg.poly_proxy_url).get(
+                "https://api.ipify.org?format=json", timeout=10
+            ).json().get("ip")
+            lines.append(f"🏠 Proxy IP: `{proxy_ip}`")
+        except Exception as e:
+            lines.append(f"🏠 Proxy IP: ❌ error ({e})")
+
+    # 4. CLOB via proxy
+    try:
+        import py_clob_client.http_helpers.helpers as helpers
+        has_proxy = hasattr(helpers._http_client, '_transport') and helpers._http_client._transport is not None
+        lines.append(f"🔌 httpx client patched: {'✅' if has_proxy else '❌'}")
+        resp = helpers._http_client.get("https://clob.polymarket.com/")
+        lines.append(f"📡 CLOB GET /: {resp.status_code}")
+    except Exception as e:
+        lines.append(f"📡 CLOB GET /: ❌ ({e})")
+
+    # 5. CLOB base URL
+    lines.append(f"🔗 CLOB URL: `{cfg.poly_clob_url}`")
+
+    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
 
 
 # ═══════════════════════════════════════════════════
@@ -201,6 +245,7 @@ def main():
     app.add_handler(CommandHandler("crypto", cmd_crypto))
     app.add_handler(CommandHandler("status", cmd_status))
     app.add_handler(CommandHandler("help", cmd_help))
+    app.add_handler(CommandHandler("proxytest", cmd_proxytest))
 
     # Scheduled jobs
     jq = app.job_queue
