@@ -25,6 +25,7 @@ Risk: Orders may not fill if Polymarket adjusts too fast.
       Spot reversal before 15-min/5-min window closes.
 """
 import asyncio
+import json
 import time
 import logging
 import httpx
@@ -86,7 +87,6 @@ async def _fetch_active_crypto_markets(duration: str = "15M") -> list[dict]:
 
         if is_duration_match and is_up_down and is_crypto:
             try:
-                import json
                 prices_str = m.get("outcomePrices", "")
                 prices = json.loads(prices_str) if isinstance(prices_str, str) else prices_str
                 if len(prices) >= 2:
@@ -101,7 +101,7 @@ async def _fetch_active_crypto_markets(duration: str = "15M") -> list[dict]:
                     "slug": m.get("slug", ""),
                     "yes_price": yes_price,
                     "no_price": no_price,
-                    "tokens": m.get("clobTokenIds", []),
+                    "tokens": json.loads(m["clobTokenIds"]) if isinstance(m.get("clobTokenIds"), str) else m.get("clobTokenIds", []),
                     "end_date": m.get("endDate"),
                     "volume": float(m.get("volume", 0) or 0),
                     "liquidity": float(m.get("liquidity", 0) or 0),
@@ -279,33 +279,36 @@ async def scan_micro_arb() -> list[dict]:
 
 async def execute_micro_arb(opportunity: dict) -> dict:
     """Execute micro-arb via MAKER limit order on Polymarket."""
-    if not cfg.poly_private_key:
-        return {"success": False, "error": "Polymarket keys not configured"}
+    from polymarket.trader import _check_region_access, _get_client, _validate_order
+
+    if not _check_region_access():
+        return {"success": False, "error": "Region blocked (403)"}
+
+    client = _get_client()
+    if not client:
+        return {"success": False, "error": "CLOB client not configured"}
+
+    tokens = opportunity["tokens"]
+    if len(tokens) < 2:
+        return {"success": False, "error": "No token IDs"}
+
+    token_id = tokens[0] if opportunity["side"] == "YES" else tokens[1]
+    price = round(opportunity["entry_price"], 2)
+    size = round(opportunity["bet_size"] / price, 2) if price > 0 else 0
+
+    err = _validate_order(price, size)
+    if err:
+        return {"success": False, "error": err}
 
     try:
-        from py_clob_client.client import ClobClient
         from py_clob_client.clob_types import OrderArgs, OrderType
         from py_clob_client.order_builder.constants import BUY
-
-        client = ClobClient(
-            "https://clob.polymarket.com",
-            key=cfg.poly_private_key,
-            chain_id=137,
-            signature_type=1,
-            funder=cfg.poly_funder_address,
-        )
-        client.set_api_creds(client.create_or_derive_api_creds())
-
-        tokens = opportunity["tokens"]
-        token_id = tokens[0] if opportunity["side"] == "YES" else tokens[1]
-        price = opportunity["entry_price"]
-        size = opportunity["bet_size"] / price if price > 0 else 0
 
         # Place as GTC LIMIT order (maker = no fees + rebates)
         order = OrderArgs(
             token_id=token_id,
-            price=round(price, 3),
-            size=round(size, 2),
+            price=price,
+            size=size,
             side=BUY,
         )
         signed = client.create_order(order)
