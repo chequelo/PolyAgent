@@ -2,11 +2,10 @@
 Combines Polymarket predictions, PM arbitrage, funding rate arb, and cross-exchange spreads.
 """
 import asyncio
-import json
 import logging
 from telegram import Update
 from telegram.ext import (
-    Application, CommandHandler, CallbackQueryHandler, ContextTypes,
+    Application, CommandHandler, ContextTypes,
 )
 from config import cfg
 
@@ -30,14 +29,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger("polyagent")
 
-# ── In-memory state for callback matching ──
-_pending_markets = {}    # market_id -> (market, estimate)
-_pending_arbs = {}       # market_id -> opportunity
-_pending_funding = {}    # pair -> opportunity
-_pending_spreads = {}    # pair -> opportunity
-_pending_micro = {}      # market_id -> opportunity
-
-
 # ═══════════════════════════════════════════════════
 # SCAN JOBS
 # ═══════════════════════════════════════════════════
@@ -56,8 +47,8 @@ async def full_scan(context: ContextTypes.DEFAULT_TYPE):
             research = await research_market(market)
             estimate = await estimate_market(market, research)
             if estimate and estimate["side"] != "SKIP" and estimate["abs_edge"] >= cfg.pm_min_edge:
-                _pending_markets[market["id"]] = (market, estimate)
-                await notify_prediction(bot, market, estimate, research)
+                result = await execute_prediction_bet(market, estimate)
+                await notify_prediction(bot, market, estimate, research, result)
     except Exception as e:
         logger.error(f"Prediction scan failed: {e}")
 
@@ -66,8 +57,8 @@ async def full_scan(context: ContextTypes.DEFAULT_TYPE):
         arbs = await scan_arb_opportunities()
         stats["pm_arbs"] = len(arbs)
         for opp in arbs[:3]:
-            _pending_arbs[opp["id"]] = opp
-            await notify_pm_arb(bot, opp)
+            result = await execute_arb(opp)
+            await notify_pm_arb(bot, opp, result)
     except Exception as e:
         logger.error(f"PM arb scan failed: {e}")
 
@@ -76,8 +67,8 @@ async def full_scan(context: ContextTypes.DEFAULT_TYPE):
         micro_opps = await scan_micro_arb()
         stats["micro_arbs"] = len(micro_opps)
         for opp in micro_opps[:3]:
-            _pending_micro[opp["market_id"]] = opp
-            await notify_micro_arb(bot, opp)
+            result = await execute_micro_arb(opp)
+            await notify_micro_arb(bot, opp, result)
     except Exception as e:
         logger.error(f"Micro-arb scan failed: {e}")
 
@@ -86,8 +77,8 @@ async def full_scan(context: ContextTypes.DEFAULT_TYPE):
         funding_opps = await scan_funding_rates()
         stats["funding"] = len(funding_opps)
         for opp in funding_opps[:3]:
-            _pending_funding[opp["pair"]] = opp
-            await notify_funding(bot, opp)
+            result = await execute_funding_arb(opp)
+            await notify_funding(bot, opp, result)
     except Exception as e:
         logger.error(f"Funding scan failed: {e}")
 
@@ -96,8 +87,8 @@ async def full_scan(context: ContextTypes.DEFAULT_TYPE):
         spread_opps = await scan_spreads()
         stats["spreads"] = len(spread_opps)
         for opp in spread_opps[:3]:
-            _pending_spreads[opp["pair"]] = opp
-            await notify_spread(bot, opp)
+            result = await execute_spread_trade(opp)
+            await notify_spread(bot, opp, result)
     except Exception as e:
         logger.error(f"Spread scan failed: {e}")
 
@@ -114,24 +105,24 @@ async def crypto_scan(context: ContextTypes.DEFAULT_TYPE):
     try:
         micro_opps = await scan_micro_arb()
         for opp in micro_opps[:2]:
-            _pending_micro[opp["market_id"]] = opp
-            await notify_micro_arb(bot, opp)
+            result = await execute_micro_arb(opp)
+            await notify_micro_arb(bot, opp, result)
     except Exception as e:
         logger.error(f"Quick micro-arb scan failed: {e}")
 
     try:
         funding_opps = await scan_funding_rates()
         for opp in funding_opps[:2]:
-            _pending_funding[opp["pair"]] = opp
-            await notify_funding(bot, opp)
+            result = await execute_funding_arb(opp)
+            await notify_funding(bot, opp, result)
     except Exception as e:
         logger.error(f"Quick funding scan failed: {e}")
 
     try:
         spread_opps = await scan_spreads()
         for opp in spread_opps[:2]:
-            _pending_spreads[opp["pair"]] = opp
-            await notify_spread(bot, opp)
+            result = await execute_spread_trade(opp)
+            await notify_spread(bot, opp, result)
     except Exception as e:
         logger.error(f"Quick spread scan failed: {e}")
 
@@ -176,8 +167,7 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"⏱ PM scan: every {cfg.pm_scan_interval_hours}h\n"
         f"⏱ Crypto scan: every {cfg.fr_scan_interval_min}min\n"
         f"📊 Spread pairs: {len(cfg.spread_pairs)}\n"
-        f"📊 Pending signals: {len(_pending_markets)} PM, "
-        f"{len(_pending_funding)} FR, {len(_pending_spreads)} spreads"
+        f"🤖 Mode: Auto-execute"
     )
     await update.message.reply_text(text, parse_mode="Markdown")
 
@@ -189,82 +179,9 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/crypto — Quick crypto scan (funding + spreads)\n"
         "/status — Balances and configuration\n"
         "/help — This message\n\n"
-        "Use inline buttons to execute or skip opportunities.",
+        "Trades are executed automatically when opportunities are found.",
         parse_mode="Markdown",
     )
-
-
-# ═══════════════════════════════════════════════════
-# CALLBACK HANDLER (inline buttons)
-# ═══════════════════════════════════════════════════
-
-async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-
-    data = query.data
-    if data == "skip":
-        await query.edit_message_reply_markup(reply_markup=None)
-        return
-
-    try:
-        payload = json.loads(data)
-    except json.JSONDecodeError:
-        return
-
-    action = payload.get("action")
-
-    if action == "pm_bet":
-        market_id = payload.get("market_id")
-        if market_id in _pending_markets:
-            market, estimate = _pending_markets.pop(market_id)
-            result = await execute_prediction_bet(market, estimate)
-            status = "✅ Executed" if result["success"] else f"❌ Failed: {result.get('error', '')}"
-            await query.edit_message_reply_markup(reply_markup=None)
-            await send_message(context.bot, f"{status}\n{market['question'][:60]}")
-
-    elif action == "pm_arb":
-        opp_id = payload.get("id")
-        if opp_id in _pending_arbs:
-            opp = _pending_arbs.pop(opp_id)
-            result = await execute_arb(opp)
-            status = "✅ Arb executed" if result["success"] else f"❌ Failed: {result.get('error', '')}"
-            await query.edit_message_reply_markup(reply_markup=None)
-            await send_message(context.bot, status)
-
-    elif action == "fr_arb":
-        pair = payload.get("pair")
-        if pair in _pending_funding:
-            opp = _pending_funding.pop(pair)
-            result = await execute_funding_arb(opp)
-            status = "✅ Funding arb executed" if result["success"] else f"❌ Failed: {result.get('error', '')}"
-            await query.edit_message_reply_markup(reply_markup=None)
-            await send_message(context.bot, status)
-
-    elif action == "spread":
-        pair = payload.get("pair")
-        if pair in _pending_spreads:
-            opp = _pending_spreads.pop(pair)
-            result = await execute_spread_trade(opp)
-            if result["success"]:
-                note = result.get("note", "")
-                status = f"✅ Spread trade executed\n{note}"
-            else:
-                status = f"❌ Failed: {result.get('error', '')}"
-            await query.edit_message_reply_markup(reply_markup=None)
-            await send_message(context.bot, status)
-
-    elif action == "micro":
-        mid = payload.get("id")
-        if mid in _pending_micro:
-            opp = _pending_micro.pop(mid)
-            result = await execute_micro_arb(opp)
-            if result["success"]:
-                status = f"✅ Micro-arb: {result['side']} @ ${result['price']:.3f} (edge {result['edge_pct']:.1f}%)"
-            else:
-                status = f"❌ Failed: {result.get('error', '')}"
-            await query.edit_message_reply_markup(reply_markup=None)
-            await send_message(context.bot, status)
 
 
 # ═══════════════════════════════════════════════════
@@ -284,7 +201,6 @@ def main():
     app.add_handler(CommandHandler("crypto", cmd_crypto))
     app.add_handler(CommandHandler("status", cmd_status))
     app.add_handler(CommandHandler("help", cmd_help))
-    app.add_handler(CallbackQueryHandler(button_handler))
 
     # Scheduled jobs
     jq = app.job_queue
