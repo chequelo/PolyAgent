@@ -11,6 +11,9 @@ from config import cfg
 
 logger = logging.getLogger("polyagent.crypto.spreads")
 
+# Reject spreads above this as likely data errors (stale price, wrong symbol match)
+MAX_PLAUSIBLE_SPREAD_PCT = 3.0
+
 
 async def scan_spreads() -> list[dict]:
     """Scan for cross-exchange price spreads."""
@@ -34,21 +37,10 @@ async def scan_spreads() -> list[dict]:
         for pair in cfg.spread_pairs:
             prices = {}
 
-            # Fetch ticker from each exchange
+            # Fetch ticker from each exchange — only match SPOT markets
             fetch_tasks = []
             for name, ex in exchanges.items():
-                # Find matching spot symbol
-                spot_symbol = None
-                for s in ex.symbols:
-                    if (pair.replace("/", "") in s.replace("/", "") and
-                        not ex.markets[s].get("swap") and
-                        not ex.markets[s].get("future")):
-                        spot_symbol = s
-                        break
-                if not spot_symbol:
-                    # Try direct
-                    if pair in ex.symbols:
-                        spot_symbol = pair
+                spot_symbol = _find_spot_symbol(ex, pair)
                 if spot_symbol:
                     fetch_tasks.append((name, spot_symbol, ex))
 
@@ -80,12 +72,22 @@ async def scan_spreads() -> list[dict]:
             sell_price = prices[best_sell_exchange]["bid"]
             spread_pct = (sell_price - buy_price) / buy_price * 100
 
+            # Sanity check: reject implausible spreads (likely data error)
+            if spread_pct > MAX_PLAUSIBLE_SPREAD_PCT:
+                logger.warning(
+                    f"Rejecting implausible spread: {pair} {spread_pct:.2f}% "
+                    f"({best_buy_exchange} {buy_price} vs {best_sell_exchange} {sell_price})"
+                )
+                continue
+
             if spread_pct >= cfg.spread_min_pct:
                 # Estimate profit after typical fees (0.1% maker on each side = 0.2% total)
                 fee_pct = 0.20
                 net_profit_pct = spread_pct - fee_pct
 
-                if net_profit_pct > 0:
+                executable = "hyperliquid" in [best_buy_exchange, best_sell_exchange]
+
+                if net_profit_pct > 0 and executable:
                     position = min(cfg.hl_bankroll * 0.3, 10.0)
                     est_profit = position * net_profit_pct / 100
 
@@ -99,7 +101,7 @@ async def scan_spreads() -> list[dict]:
                         "net_profit_pct": round(net_profit_pct, 4),
                         "est_profit_usd": round(est_profit, 4),
                         "all_prices": {k: {"bid": v["bid"], "ask": v["ask"]} for k, v in prices.items()},
-                        "executable": "hyperliquid" in [best_buy_exchange, best_sell_exchange],
+                        "executable": True,
                     })
 
     except Exception as e:
@@ -114,3 +116,25 @@ async def scan_spreads() -> list[dict]:
     opportunities.sort(key=lambda x: x["net_profit_pct"], reverse=True)
     logger.info(f"Spread scan: {len(opportunities)} opportunities found")
     return opportunities
+
+
+def _find_spot_symbol(exchange, pair: str) -> str | None:
+    """Find the exact spot symbol for a pair on an exchange."""
+    # Try direct match first
+    if pair in exchange.symbols:
+        market = exchange.markets[pair]
+        if market.get("spot", False) and not market.get("swap") and not market.get("future"):
+            return pair
+
+    # Search for matching spot market
+    base, quote = pair.split("/")
+    for symbol, market in exchange.markets.items():
+        if (market.get("base") == base and
+            market.get("quote") == quote and
+            market.get("spot", False) and
+            not market.get("swap") and
+            not market.get("future") and
+            not market.get("option")):
+            return symbol
+
+    return None
