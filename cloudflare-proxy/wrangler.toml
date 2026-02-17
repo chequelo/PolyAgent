@@ -1,0 +1,6 @@
+name = "polymarket-clob-proxy"
+main = "src/index.js"
+compatibility_date = "2024-01-01"
+
+# Optional: set a custom route/domain
+# routes = [{ pattern = "clob-proxy.yourdomain.com/*", zone_name = "yourdomain.com" }]

@@ -17,12 +17,13 @@ def _get_client():
     if _clob_client is None and cfg.poly_private_key:
         from py_clob_client.client import ClobClient
         _clob_client = ClobClient(
-            "https://clob.polymarket.com",
+            cfg.poly_clob_url,
             key=cfg.poly_private_key,
             chain_id=137,
             signature_type=1,
             funder=cfg.poly_funder_address,
         )
+        logger.info(f"CLOB client initialized → {cfg.poly_clob_url}")
         _clob_client.set_api_creds(_clob_client.create_or_derive_api_creds())
     return _clob_client
 
