@@ -1,4 +1,5 @@
 """Polymarket Scanner — Market discovery + YES/NO arbitrage detection"""
+import json
 import httpx
 import logging
 from config import cfg
@@ -51,7 +52,7 @@ async def scan_prediction_markets() -> list[dict]:
             "mid": mid,
             "end_date": m.get("endDate"),
             "outcomes": m.get("outcomes", []),
-            "tokens": m.get("clobTokenIds", []),
+            "tokens": json.loads(m["clobTokenIds"]) if isinstance(m.get("clobTokenIds"), str) else m.get("clobTokenIds", []),
             "category": m.get("category", ""),
         })
 
@@ -71,8 +72,9 @@ async def scan_arb_opportunities() -> list[dict]:
 
     opportunities = []
     for m in markets:
-        tokens = m.get("clobTokenIds", [])
-        if len(tokens) != 2:
+        raw_tokens = m.get("clobTokenIds", [])
+        tokens = json.loads(raw_tokens) if isinstance(raw_tokens, str) else raw_tokens
+        if not isinstance(tokens, list) or len(tokens) != 2:
             continue
 
         try:
@@ -91,7 +93,6 @@ async def scan_arb_opportunities() -> list[dict]:
                 continue
 
             # outcomePrices is a JSON string like "[0.55, 0.45]"
-            import json
             prices = json.loads(prices_str) if isinstance(prices_str, str) else prices_str
             if len(prices) != 2:
                 continue
