@@ -15,6 +15,7 @@ class Config:
     poly_funder_address: str = ""
     poly_bankroll: float = 20.0
     poly_clob_url: str = "https://clob.polymarket.com"  # Override with CF Worker URL to bypass geo-block
+    poly_proxy_url: str = ""  # Residential proxy (e.g. http://user:pass@gate.dataimpulse.com:823)
 
     # ── Hyperliquid ──
     hl_private_key: str = ""          # ETH wallet private key
@@ -65,6 +66,7 @@ class Config:
             poly_funder_address=os.getenv("POLYMARKET_FUNDER_ADDRESS", ""),
             poly_bankroll=float(os.getenv("POLY_BANKROLL", "20")),
             poly_clob_url=os.getenv("POLY_CLOB_PROXY_URL", "https://clob.polymarket.com"),
+            poly_proxy_url=os.getenv("POLY_PROXY_URL", ""),
             hl_private_key=os.getenv("HYPERLIQUID_PRIVATE_KEY", ""),
             hl_wallet_address=os.getenv("HYPERLIQUID_WALLET_ADDRESS", ""),
             hl_bankroll=float(os.getenv("HL_BANKROLL", "20")),

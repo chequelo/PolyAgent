@@ -5,15 +5,33 @@ from config import cfg
 logger = logging.getLogger("polyagent.pm.trader")
 
 _clob_client = None
+_proxy_patched = False
 
 PM_MIN_SIZE = 1.0     # Minimum $1 order on CLOB
 PM_MIN_PRICE = 0.01
 PM_MAX_PRICE = 0.99
 
 
+def _patch_proxy():
+    """Monkey-patch py-clob-client's httpx client to use a residential proxy."""
+    global _proxy_patched
+    if _proxy_patched or not cfg.poly_proxy_url:
+        return
+
+    try:
+        import httpx
+        import py_clob_client.http_helpers.helpers as helpers
+        helpers._http_client = httpx.Client(proxy=cfg.poly_proxy_url, http2=True)
+        _proxy_patched = True
+        logger.info(f"CLOB proxy patched → {cfg.poly_proxy_url.split('@')[-1]}")
+    except Exception as e:
+        logger.error(f"Failed to patch CLOB proxy: {e}")
+
+
 def _get_client():
     global _clob_client
     if _clob_client is None and cfg.poly_private_key:
+        _patch_proxy()
         from py_clob_client.client import ClobClient
         _clob_client = ClobClient(
             cfg.poly_clob_url,
