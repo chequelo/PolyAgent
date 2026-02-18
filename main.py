@@ -22,6 +22,8 @@ from notifier import (
     notify_prediction, notify_pm_arb, notify_funding,
     notify_spread, notify_micro_arb, notify_scan_summary, send_message,
 )
+from position_manager import check_positions
+from positions import get_open_positions, position_age_hours
 
 logging.basicConfig(
     level=logging.INFO,
@@ -187,12 +189,48 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🤖 *Commands*\n\n"
         "/scan — Full scan (PM predictions + arbs + crypto)\n"
         "/crypto — Quick crypto scan (funding + spreads)\n"
+        "/positions — Show open positions\n"
         "/status — Balances and configuration\n"
         "/proxytest — Test proxy and CLOB connectivity\n"
         "/help — This message\n\n"
-        "Trades are executed automatically when opportunities are found.",
+        "Trades are executed and closed automatically.",
         parse_mode="Markdown",
     )
+
+
+async def manage_positions(context: ContextTypes.DEFAULT_TYPE):
+    """Periodic job: check open positions and close when exit criteria met."""
+    bot = context.bot
+    logger.info("── Position check ──")
+    try:
+        actions = await check_positions(bot)
+        if actions:
+            logger.info(f"Position manager closed {len(actions)} positions")
+    except Exception as e:
+        logger.error(f"Position manager failed: {e}")
+
+
+async def cmd_positions(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show currently open positions."""
+    positions = get_open_positions()
+    if not positions:
+        await update.message.reply_text("📭 No open positions.")
+        return
+
+    lines = [f"📊 *Open Positions ({len(positions)})*\n"]
+    for pos in positions:
+        age = position_age_hours(pos.entry_time)
+        lines.append(
+            f"{'🔴' if pos.side == 'short' else '🟢'} "
+            f"*{pos.symbol}* {pos.side} on {pos.exchange}\n"
+            f"  Entry: ${pos.entry_price:.4f} | Size: ${pos.size_usd:.2f} | {age:.1f}h ago\n"
+            f"  Strategy: {pos.strategy}"
+        )
+        if pos.entry_rate:
+            lines.append(f" | Rate: {pos.entry_rate * 100:.4f}%")
+        lines.append("\n")
+
+    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
 
 
 async def cmd_proxytest(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -341,6 +379,7 @@ def main():
     app.add_handler(CommandHandler("help", cmd_help))
     app.add_handler(CommandHandler("proxytest", cmd_proxytest))
     app.add_handler(CommandHandler("balancetest", cmd_balancetest))
+    app.add_handler(CommandHandler("positions", cmd_positions))
 
     # Scheduled jobs
     jq = app.job_queue
@@ -361,9 +400,18 @@ def main():
         name="crypto_scan",
     )
 
+    # Position manager — check exits every N minutes
+    jq.run_repeating(
+        manage_positions,
+        interval=cfg.pos_check_interval_min * 60,
+        first=180,  # Start 3min after boot
+        name="position_manager",
+    )
+
     logger.info("🤖 PolyAgent v2 starting...")
     logger.info(f"   PM scan: every {cfg.pm_scan_interval_hours}h")
     logger.info(f"   Crypto scan: every {cfg.fr_scan_interval_min}min")
+    logger.info(f"   Position check: every {cfg.pos_check_interval_min}min")
     logger.info(f"   Strategies: Predictions + PM Arb + Funding Rate + Spreads")
 
     app.run_polling(drop_pending_updates=True)

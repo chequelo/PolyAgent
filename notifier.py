@@ -176,3 +176,37 @@ async def notify_scan_summary(bot, stats: dict, diagnostics: dict | None = None)
 
     text += f"\n⏱ Next scan in {cfg.pm_scan_interval_hours}h"
     await send_message(bot, text)
+
+
+async def notify_position_closed(bot, position, result: dict):
+    """Send notification when a position is automatically closed."""
+    pnl = result.get("pnl", 0) or 0
+    pnl_emoji = "🟢" if pnl >= 0 else "🔴"
+    status = "✅ Closed" if result.get("success") else f"❌ Close failed: {result.get('error', 'unknown')}"
+
+    reason_labels = {
+        "rate_flipped": "Funding rate flipped sign",
+        "rate_dropped": "Funding rate dropped >50%",
+        "timeout_24h": "Position timeout (24h)",
+        "timeout_1h": "Position timeout (1h)",
+        "spread_closed": "Spread closed (<0.03%)",
+        "profit_take": "Profit taking (spread reversed)",
+    }
+    reason = result.get("reason", "unknown")
+    reason_text = reason_labels.get(reason, reason)
+
+    from positions import position_age_hours  # avoid circular at module level
+    age = position_age_hours(position.entry_time) if hasattr(position, 'entry_time') else 0
+
+    text = (
+        f"🔒 *POSITION CLOSED — {position.strategy.upper()}*\n\n"
+        f"📍 {position.symbol} on {position.exchange}\n"
+        f"📊 Side: {position.side} | Qty: {position.quantity:.4f}\n"
+        f"💵 Entry: ${position.entry_price:.4f} → Exit: ${result.get('close_price', 0):.4f}\n"
+        f"{pnl_emoji} PnL: *${pnl:+.2f}*\n"
+        f"⏱ Duration: {age:.1f}h\n"
+        f"📝 Reason: {reason_text}\n\n"
+        f"🤖 {status}"
+    )
+
+    await send_message(bot, text)

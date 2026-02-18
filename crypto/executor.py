@@ -2,6 +2,7 @@
 import logging
 import ccxt.async_support as ccxt
 from config import cfg
+from positions import create_funding_position, create_spread_position
 
 logger = logging.getLogger("polyagent.crypto.executor")
 
@@ -101,6 +102,21 @@ async def execute_funding_arb(opportunity: dict) -> dict:
             f"Funding arb executed: {pair} {direction} "
             f"size=${size_usd:.2f} rate={opportunity['funding_rate_pct']:.4f}%"
         )
+
+        # Track position for automatic exit management
+        perp_side = "short" if direction == "short_perp" else "long"
+        create_funding_position(
+            symbol=opportunity["hl_symbol"],
+            side=perp_side,
+            quantity=quantity,
+            entry_price=price,
+            size_usd=size_usd,
+            entry_rate=opportunity["funding_rate"],
+            direction=direction,
+            pair=pair,
+            order_ids=[r["order"] for r in results],
+        )
+
         return {"success": True, "results": results, "size_usd": size_usd}
 
     except Exception as e:
@@ -155,11 +171,29 @@ async def execute_spread_trade(opportunity: dict) -> dict:
         buy_order = await buy_client.create_order(buy_symbol, "market", "buy", quantity, buy_price)
         sell_order = await sell_client.create_order(sell_symbol, "market", "sell", quantity, sell_price)
 
+        buy_order_id = str(buy_order.get("id", ""))
+        sell_order_id = str(sell_order.get("id", ""))
+
         logger.info(
             f"Spread arb: BUY {pair} on {buy_exchange} @ ${buy_price:.4f}, "
             f"SELL on {sell_exchange} @ ${sell_price:.4f}, "
             f"qty={quantity:.6f}, spread={opportunity['spread_pct']:.3f}%"
         )
+
+        # Track position for automatic exit management
+        create_spread_position(
+            buy_exchange=buy_exchange,
+            buy_symbol=buy_symbol,
+            sell_exchange=sell_exchange,
+            sell_symbol=sell_symbol,
+            quantity=quantity,
+            buy_price=buy_price,
+            sell_price=sell_price,
+            size_usd=size_usd,
+            buy_order_id=buy_order_id,
+            sell_order_id=sell_order_id,
+        )
+
         return {
             "success": True,
             "buy_exchange": buy_exchange,
@@ -167,8 +201,8 @@ async def execute_spread_trade(opportunity: dict) -> dict:
             "buy_price": buy_price,
             "sell_price": sell_price,
             "quantity": quantity,
-            "buy_order_id": str(buy_order.get("id", "")),
-            "sell_order_id": str(sell_order.get("id", "")),
+            "buy_order_id": buy_order_id,
+            "sell_order_id": sell_order_id,
             "note": "Both legs executed",
         }
 
