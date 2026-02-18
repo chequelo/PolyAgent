@@ -23,7 +23,11 @@ from notifier import (
     notify_spread, notify_micro_arb, notify_scan_summary, send_message,
 )
 from position_manager import check_positions
-from positions import get_open_positions, position_age_hours
+from positions import (
+    get_open_positions, position_age_hours,
+    get_active_market_ids, get_total_pm_exposure, get_category_exposure,
+    create_prediction_position,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -41,16 +45,53 @@ async def full_scan(context: ContextTypes.DEFAULT_TYPE):
     logger.info("═══ Starting full scan ═══")
     stats = {"predictions": 0, "pm_arbs": 0, "micro_arbs": 0, "funding": 0, "spreads": 0}
 
-    # ── 1. Polymarket Predictions ──
+    # ── 1. Polymarket Predictions (Simons: small edge × many bets × low correlation) ──
+    PM_MIN_SIZE = 0.50  # Minimum viable bet
     try:
         markets = await scan_prediction_markets()
         stats["predictions"] = len(markets)
-        for market in markets[:5]:  # Analyze top 5
+        active_ids = get_active_market_ids()
+        available_bankroll = cfg.poly_bankroll - get_total_pm_exposure()
+        category_exp = get_category_exposure()
+        bets_placed = 0
+
+        for market in markets[:cfg.pm_max_markets_per_scan]:
+            # Dedup: skip if we already have a position
+            if market["id"] in active_ids:
+                logger.info(f"Skip (dedup): {market['question'][:60]}")
+                continue
+            # Category cap: skip if category exposure >= 30% of bankroll
+            cat = market.get("category") or "Other"
+            if category_exp.get(cat, 0) >= cfg.poly_bankroll * cfg.pm_max_category_exposure:
+                logger.info(f"Skip (cat cap {cat}): {market['question'][:60]}")
+                continue
+            # Bankroll check: stop if no funds left
+            if available_bankroll < PM_MIN_SIZE:
+                logger.info("Stopping prediction scan: insufficient bankroll")
+                break
+
             research = await research_market(market)
-            estimate = await estimate_market(market, research)
+            estimate = await estimate_market(market, research, available_bankroll)
             if estimate and estimate["side"] != "SKIP" and estimate["abs_edge"] >= cfg.pm_min_edge:
                 result = await execute_prediction_bet(market, estimate)
                 await notify_prediction(bot, market, estimate, research, result)
+                # Track position and update exposure
+                if result and result.get("success"):
+                    bet_size = estimate["kelly_bet"]
+                    create_prediction_position(
+                        market_id=market["id"],
+                        market_question=market["question"],
+                        category=cat,
+                        side=estimate["side"],
+                        entry_price=market["mid"],
+                        size_usd=bet_size,
+                    )
+                    available_bankroll -= bet_size
+                    category_exp[cat] = category_exp.get(cat, 0) + bet_size
+                    active_ids.add(market["id"])
+                    bets_placed += 1
+
+        logger.info(f"Simons scan: {bets_placed} bets placed, ${available_bankroll:.2f} remaining")
     except Exception as e:
         logger.error(f"Prediction scan failed: {e}")
 
@@ -166,16 +207,27 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for ex_name, usd_total in balances.items():
         bal_lines.append(f"  {ex_name}: ${usd_total:.2f}")
 
+    # PM portfolio info
+    pm_exposure = get_total_pm_exposure()
+    pm_available = cfg.poly_bankroll - pm_exposure
+    pm_positions = len(get_active_market_ids())
+    cat_exp = get_category_exposure()
+    cat_lines = [f"  {cat}: ${amt:.2f}" for cat, amt in sorted(cat_exp.items())] if cat_exp else ["  (none)"]
+
     text = (
         f"🤖 *PolyAgent v2 Status*\n\n"
-        f"💰 *Polymarket bankroll:* ${cfg.poly_bankroll}\n"
+        f"💰 *Polymarket:* ${cfg.poly_bankroll} bankroll\n"
+        f"  Deployed: ${pm_exposure:.2f} in {pm_positions} markets\n"
+        f"  Available: ${pm_available:.2f}\n"
+        f"  Min edge: {cfg.pm_min_edge:.0%} | Max/bet: ${cfg.pm_max_bet}\n"
+        f"📂 *Category exposure:*\n" + "\n".join(cat_lines) + "\n"
         f"💰 *Exchange balances:*\n" + "\n".join(bal_lines or ["  (none)"]) + "\n"
         f"🔑 PM keys: {'✅' if cfg.poly_private_key else '❌'}\n"
         f"🔑 HL keys: {'✅' if cfg.hl_private_key else '❌'}\n"
         f"🔑 Binance: {'✅' if cfg.binance_api_key else '❌'}\n"
         f"🧠 Claude: {'✅' if cfg.anthropic_key else '❌'}\n"
         f"🔎 Tavily: {'✅' if cfg.tavily_key else '❌'}\n\n"
-        f"⏱ PM scan: every {cfg.pm_scan_interval_hours}h\n"
+        f"⏱ PM scan: every {cfg.pm_scan_interval_hours}h (up to {cfg.pm_max_markets_per_scan} markets)\n"
         f"⏱ Crypto scan: every {cfg.fr_scan_interval_min}min\n"
         f"📊 Spread pairs: {len(cfg.spread_pairs)}\n"
         f"🤖 Mode: Auto-execute"
@@ -216,18 +268,40 @@ async def cmd_positions(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("📭 No open positions.")
         return
 
+    # Separate prediction positions from crypto positions
+    pm_positions = [p for p in positions if p.strategy == "prediction"]
+    other_positions = [p for p in positions if p.strategy != "prediction"]
+
     lines = [f"📊 *Open Positions ({len(positions)})*\n"]
-    for pos in positions:
-        age = position_age_hours(pos.entry_time)
-        lines.append(
-            f"{'🔴' if pos.side == 'short' else '🟢'} "
-            f"*{pos.symbol}* {pos.side} on {pos.exchange}\n"
-            f"  Entry: ${pos.entry_price:.4f} | Size: ${pos.size_usd:.2f} | {age:.1f}h ago\n"
-            f"  Strategy: {pos.strategy}"
-        )
-        if pos.entry_rate:
-            lines.append(f" | Rate: {pos.entry_rate * 100:.4f}%")
-        lines.append("\n")
+
+    if pm_positions:
+        lines.append(f"*Polymarket ({len(pm_positions)}):*")
+        for pos in pm_positions:
+            age = position_age_hours(pos.entry_time)
+            question = pos.market_question or pos.symbol
+            cat = pos.category or ""
+            lines.append(
+                f"{'🟢' if pos.side == 'YES' else '🔴'} "
+                f"*{pos.side}* {question[:60]}\n"
+                f"  ${pos.entry_price:.2f} × ${pos.size_usd:.2f}"
+                f"{f' | {cat}' if cat else ''} | {age:.1f}h ago"
+            )
+        total_pm = sum(p.size_usd for p in pm_positions)
+        lines.append(f"\n  Total PM exposure: *${total_pm:.2f}*\n")
+
+    if other_positions:
+        lines.append(f"*Crypto ({len(other_positions)}):*")
+        for pos in other_positions:
+            age = position_age_hours(pos.entry_time)
+            lines.append(
+                f"{'🔴' if pos.side == 'short' else '🟢'} "
+                f"*{pos.symbol}* {pos.side} on {pos.exchange}\n"
+                f"  Entry: ${pos.entry_price:.4f} | Size: ${pos.size_usd:.2f} | {age:.1f}h ago\n"
+                f"  Strategy: {pos.strategy}"
+            )
+            if pos.entry_rate:
+                lines.append(f" | Rate: {pos.entry_rate * 100:.4f}%")
+            lines.append("")
 
     await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
 

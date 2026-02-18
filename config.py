@@ -27,14 +27,16 @@ class Config:
     binance_secret: str = ""
     binance_bankroll: float = 20.0
 
-    # ── Strategy: Polymarket Predictions ──
-    pm_scan_interval_hours: int = 4
+    # ── Strategy: Polymarket Predictions (Simons: small edge × many bets × low correlation) ──
+    pm_scan_interval_hours: int = 2
     pm_min_volume: float = 10_000
     pm_min_liquidity: float = 5_000
     pm_max_spread: float = 0.05
-    pm_min_edge: float = 0.08         # 8% minimum edge to bet
+    pm_min_edge: float = 0.03         # 3% edge (Simons: small edge is enough with volume)
     pm_kelly_fraction: float = 0.15   # 15% Kelly (conservative)
-    pm_max_bet: float = 5.0           # Max $5 per bet
+    pm_max_bet: float = 2.0           # $2 max per bet (more granular)
+    pm_max_markets_per_scan: int = 20 # Analyze up to 20 markets per scan
+    pm_max_category_exposure: float = 0.30  # Max 30% of bankroll in one category
 
     # ── Strategy: Polymarket YES+NO Arbitrage ──
     pm_arb_min_profit: float = 0.005  # Min $0.005 per $1 profit after fees

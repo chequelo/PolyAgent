@@ -42,6 +42,10 @@ class Position:
     # For spread: SL on the other leg
     other_sl_order_id: str | None = None
     other_sl_price: float | None = None
+    # Prediction-specific
+    market_id: str | None = None
+    market_question: str | None = None
+    category: str | None = None
     # Close info (filled on close)
     close_time: str | None = None
     close_price: float | None = None
@@ -180,6 +184,69 @@ def create_spread_position(
     )
     save_position(pos)
     return pos
+
+
+def create_prediction_position(
+    market_id: str,
+    market_question: str,
+    category: str,
+    side: str,
+    entry_price: float,
+    size_usd: float,
+    order_ids: list[str] | None = None,
+) -> Position:
+    """Create and save a Polymarket prediction position."""
+    pos = Position(
+        id=str(uuid.uuid4())[:8],
+        strategy="prediction",
+        exchange="polymarket",
+        symbol=market_question[:50],
+        side=side,
+        quantity=size_usd / entry_price if entry_price > 0 else 0,
+        entry_price=entry_price,
+        entry_time=datetime.now(timezone.utc).isoformat(),
+        size_usd=size_usd,
+        order_ids=order_ids or [],
+        market_id=market_id,
+        market_question=market_question,
+        category=category or "Other",
+    )
+    save_position(pos)
+    return pos
+
+
+def get_active_market_ids() -> set[str]:
+    """Get market IDs of open prediction positions (for dedup)."""
+    positions = _load()
+    return {
+        p["market_id"]
+        for p in positions
+        if p.get("status") == "open"
+        and p.get("strategy") == "prediction"
+        and p.get("market_id")
+    }
+
+
+def get_total_pm_exposure() -> float:
+    """Total USD in open Polymarket prediction positions."""
+    positions = _load()
+    return sum(
+        p.get("size_usd", 0)
+        for p in positions
+        if p.get("status") == "open" and p.get("strategy") == "prediction"
+    )
+
+
+def get_category_exposure() -> dict[str, float]:
+    """USD exposure per category in open prediction positions."""
+    positions = _load()
+    exposure: dict[str, float] = {}
+    for p in positions:
+        if p.get("status") != "open" or p.get("strategy") != "prediction":
+            continue
+        cat = p.get("category", "Other")
+        exposure[cat] = exposure.get(cat, 0) + p.get("size_usd", 0)
+    return exposure
 
 
 def position_age_hours(entry_time: str) -> float:

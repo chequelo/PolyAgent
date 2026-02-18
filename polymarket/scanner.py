@@ -13,7 +13,7 @@ async def scan_prediction_markets() -> list[dict]:
     async with httpx.AsyncClient(timeout=30) as client:
         resp = await client.get(f"{GAMMA_API}/markets", params={
             "active": "true", "closed": "false",
-            "limit": 100, "order": "volume24hr", "ascending": "false",
+            "limit": 200, "order": "volume24hr", "ascending": "false",
         })
         resp.raise_for_status()
         markets = resp.json()
@@ -57,7 +57,7 @@ async def scan_prediction_markets() -> list[dict]:
         })
 
     logger.info(f"Prediction scan: {len(filtered)} markets from {len(markets)} total")
-    return filtered[:20]  # Top 20 by volume
+    return filtered
 
 
 async def scan_arb_opportunities() -> list[dict]:

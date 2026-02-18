@@ -119,7 +119,7 @@ def _enrich_market_description(market: dict) -> str:
     return "\n".join(parts)
 
 
-async def estimate_market(market: dict, research: dict) -> dict | None:
+async def estimate_market(market: dict, research: dict, available_bankroll: float | None = None) -> dict | None:
     """Run superforecasting analysis on a market."""
     if not cfg.anthropic_key:
         logger.error("No Anthropic API key configured")
@@ -167,8 +167,9 @@ Using the 5-step superforecasting methodology, analyze this market and provide y
         side = result.get("recommended_side", "SKIP")
         confidence = result.get("confidence", "low")
 
-        # Kelly criterion sizing
-        kelly_bet = _kelly_size(prob, market_price, side)
+        # Kelly criterion sizing against available bankroll
+        bankroll = available_bankroll if available_bankroll is not None else cfg.poly_bankroll
+        kelly_bet = _kelly_size(prob, market_price, side, bankroll)
 
         return {
             "probability": prob,
@@ -239,8 +240,8 @@ def _format_research(research: dict) -> str:
     return "\n".join(parts) if parts else "No research data available."
 
 
-def _kelly_size(prob: float, market_price: float, side: str) -> float:
-    """Calculate Kelly criterion bet size.
+def _kelly_size(prob: float, market_price: float, side: str, available_bankroll: float) -> float:
+    """Calculate Kelly criterion bet size with dynamic bankroll.
 
     f = (p * b - q) / b
     where b = payout odds = (1-price)/price, q = 1-p
@@ -265,8 +266,8 @@ def _kelly_size(prob: float, market_price: float, side: str) -> float:
     if f <= 0:
         return 0.0
 
-    # Fractional Kelly (conservative)
-    bet = f * cfg.pm_kelly_fraction * cfg.poly_bankroll
+    # Fractional Kelly against available (not total) bankroll
+    bet = f * cfg.pm_kelly_fraction * available_bankroll
 
     # Apply limits
     bet = min(bet, cfg.pm_max_bet)
