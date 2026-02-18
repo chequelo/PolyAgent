@@ -134,7 +134,7 @@ async def execute_spread_trade(opportunity: dict) -> dict:
 
     # Size: min of both bankrolls, capped at spread_max_position
     min_bankroll = min(_get_bankroll(buy_exchange), _get_bankroll(sell_exchange))
-    size_usd = min(min_bankroll * 0.3, cfg.spread_max_position)
+    size_usd = max(10.0, min(min_bankroll * 0.5, cfg.spread_max_position))
 
     buy_qty = size_usd / buy_price
     sell_qty = size_usd / sell_price

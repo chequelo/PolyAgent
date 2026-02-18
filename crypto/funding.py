@@ -115,7 +115,7 @@ async def scan_funding_rates() -> list[dict]:
                         "strategy": strategy,
                         "direction": direction,
                         "comparison": comparison_rates,
-                        "position_size": min(cfg.fr_max_position, cfg.hl_bankroll * 0.4),
+                        "position_size": max(10.0, min(cfg.fr_max_position, cfg.hl_bankroll * 0.5)),
                     })
 
                 # ── Strategy 2: Differential (HL vs Binance) ──
@@ -144,7 +144,7 @@ async def scan_funding_rates() -> list[dict]:
                             "strategy": strategy,
                             "direction": direction,
                             "comparison": {ex_name: comp},
-                            "position_size": min(cfg.fr_max_position, cfg.hl_bankroll * 0.4),
+                            "position_size": max(10.0, min(cfg.fr_max_position, cfg.hl_bankroll * 0.5)),
                         })
 
                 # Near misses
