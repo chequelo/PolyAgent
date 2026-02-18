@@ -41,5 +41,5 @@ jobs:
             echo "Total lines: $(wc -l < .env)"
 
             docker compose build --quiet
-            docker compose up -d
+            docker compose up -d --force-recreate
             echo "✅ Deployed at $(date)"
