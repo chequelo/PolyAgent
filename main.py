@@ -241,7 +241,45 @@ async def cmd_balancetest(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Hyperliquid
     if cfg.hl_private_key:
         lines.append("*Hyperliquid:*")
-        lines.append(f"  wallet: `{cfg.hl_wallet_address[:10]}...`")
+        lines.append(f"  wallet: `{cfg.hl_wallet_address}`")
+
+        # Direct API call (bypass CCXT)
+        try:
+            import httpx as httpx_sync
+            resp = httpx_sync.post(
+                "https://api.hyperliquid.xyz/info",
+                json={"type": "clearinghouseState", "user": cfg.hl_wallet_address},
+                timeout=10,
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                margin = data.get("marginSummary", {})
+                account_value = margin.get("accountValue", "0")
+                total_margin = margin.get("totalMarginUsed", "0")
+                lines.append(f"  API direct: value=${account_value}, margin=${total_margin}")
+            else:
+                lines.append(f"  API direct: HTTP {resp.status_code}")
+        except Exception as e:
+            lines.append(f"  API direct: error ({e})")
+
+        # Also check spot balance via direct API
+        try:
+            resp = httpx_sync.post(
+                "https://api.hyperliquid.xyz/info",
+                json={"type": "spotClearinghouseState", "user": cfg.hl_wallet_address},
+                timeout=10,
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                balances_list = data.get("balances", [])
+                spot_bals = {b["coin"]: b["total"] for b in balances_list if float(b.get("total", 0)) > 0}
+                lines.append(f"  API spot: {spot_bals or 'empty'}")
+            else:
+                lines.append(f"  API spot: HTTP {resp.status_code}")
+        except Exception as e:
+            lines.append(f"  API spot: error ({e})")
+
+        # CCXT check
         try:
             hl = ccxt_async.hyperliquid({
                 "privateKey": cfg.hl_private_key,
@@ -249,34 +287,12 @@ async def cmd_balancetest(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "enableRateLimit": True,
             })
             await hl.load_markets()
-
-            # Try default
-            try:
-                bal = await hl.fetch_balance()
-                total = {k: v for k, v in bal.get("total", {}).items() if v and float(v) > 0}
-                lines.append(f"  default: {total or 'empty'}")
-            except Exception as e:
-                lines.append(f"  default: error ({e})")
-
-            # Try swap
-            try:
-                bal = await hl.fetch_balance({"type": "swap"})
-                total = {k: v for k, v in bal.get("total", {}).items() if v and float(v) > 0}
-                lines.append(f"  swap: {total or 'empty'}")
-            except Exception as e:
-                lines.append(f"  swap: error ({e})")
-
-            # Try spot
-            try:
-                bal = await hl.fetch_balance({"type": "spot"})
-                total = {k: v for k, v in bal.get("total", {}).items() if v and float(v) > 0}
-                lines.append(f"  spot: {total or 'empty'}")
-            except Exception as e:
-                lines.append(f"  spot: error ({e})")
-
+            bal = await hl.fetch_balance()
+            total = {k: v for k, v in bal.get("total", {}).items() if v and float(v) > 0}
+            lines.append(f"  CCXT: {total or 'empty'}")
             await hl.close()
         except Exception as e:
-            lines.append(f"  init error: {e}")
+            lines.append(f"  CCXT: error ({e})")
     else:
         lines.append("*Hyperliquid:* no key")
 
