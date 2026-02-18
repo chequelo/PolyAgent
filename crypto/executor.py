@@ -257,29 +257,48 @@ async def get_balances() -> dict:
         try:
             client = await _get_client(name)
             if not client:
+                logger.warning(f"No client for {name}")
                 continue
 
             combined = {}
 
-            if name == "hyperliquid":
-                # Hyperliquid has separate spot and perp (swap) accounts
-                for account_type in ["spot", "swap"]:
+            # Try default fetch first (works for most exchanges)
+            try:
+                balance = await client.fetch_balance()
+                total = balance.get("total", {})
+                for k, v in total.items():
+                    try:
+                        fv = float(v) if v else 0
+                        if fv > 0:
+                            combined[k] = combined.get(k, 0) + fv
+                    except (ValueError, TypeError):
+                        pass
+            except Exception as e:
+                logger.warning(f"Default fetch_balance failed for {name}: {e}")
+
+            # For Hyperliquid, also try swap account if default didn't find much
+            if name == "hyperliquid" and sum(combined.values()) < 1:
+                for account_type in ["swap", "spot"]:
                     try:
                         bal = await client.fetch_balance({"type": account_type})
                         total = bal.get("total", {})
                         for k, v in total.items():
-                            if v and float(v) > 0:
-                                combined[k] = combined.get(k, 0) + float(v)
-                    except Exception:
-                        pass
-            else:
-                balance = await client.fetch_balance()
-                total = balance.get("total", {})
-                for k, v in total.items():
-                    if v and float(v) > 0:
-                        combined[k] = float(v)
+                            try:
+                                fv = float(v) if v else 0
+                                if fv > 0:
+                                    combined[k] = combined.get(k, 0) + fv
+                            except (ValueError, TypeError):
+                                pass
+                    except Exception as e:
+                        logger.debug(f"HL {account_type} balance: {e}")
 
-            balances[name] = combined
+            if combined:
+                balances[name] = combined
+                logger.info(f"Balance {name}: {combined}")
+            else:
+                balances[name] = {}
+                logger.warning(f"No balance found for {name}")
+
         except Exception as e:
             logger.error(f"Balance fetch failed for {name}: {e}")
 
