@@ -233,6 +233,74 @@ async def cmd_proxytest(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
 
 
+async def cmd_balancetest(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Debug command: raw balance output from each exchange."""
+    import ccxt.async_support as ccxt_async
+    lines = []
+
+    # Hyperliquid
+    if cfg.hl_private_key:
+        lines.append("*Hyperliquid:*")
+        lines.append(f"  wallet: `{cfg.hl_wallet_address[:10]}...`")
+        try:
+            hl = ccxt_async.hyperliquid({
+                "privateKey": cfg.hl_private_key,
+                "walletAddress": cfg.hl_wallet_address,
+                "enableRateLimit": True,
+            })
+            await hl.load_markets()
+
+            # Try default
+            try:
+                bal = await hl.fetch_balance()
+                total = {k: v for k, v in bal.get("total", {}).items() if v and float(v) > 0}
+                lines.append(f"  default: {total or 'empty'}")
+            except Exception as e:
+                lines.append(f"  default: error ({e})")
+
+            # Try swap
+            try:
+                bal = await hl.fetch_balance({"type": "swap"})
+                total = {k: v for k, v in bal.get("total", {}).items() if v and float(v) > 0}
+                lines.append(f"  swap: {total or 'empty'}")
+            except Exception as e:
+                lines.append(f"  swap: error ({e})")
+
+            # Try spot
+            try:
+                bal = await hl.fetch_balance({"type": "spot"})
+                total = {k: v for k, v in bal.get("total", {}).items() if v and float(v) > 0}
+                lines.append(f"  spot: {total or 'empty'}")
+            except Exception as e:
+                lines.append(f"  spot: error ({e})")
+
+            await hl.close()
+        except Exception as e:
+            lines.append(f"  init error: {e}")
+    else:
+        lines.append("*Hyperliquid:* no key")
+
+    # Binance
+    if cfg.binance_api_key:
+        lines.append("*Binance:*")
+        try:
+            bn = ccxt_async.binance({
+                "apiKey": cfg.binance_api_key,
+                "secret": cfg.binance_secret,
+                "enableRateLimit": True,
+            })
+            bal = await bn.fetch_balance()
+            total = {k: v for k, v in bal.get("total", {}).items() if v and float(v) > 0}
+            lines.append(f"  balance: {total or 'empty'}")
+            await bn.close()
+        except Exception as e:
+            lines.append(f"  error: {e}")
+    else:
+        lines.append("*Binance:* no key")
+
+    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+
+
 # ═══════════════════════════════════════════════════
 # MAIN
 # ═══════════════════════════════════════════════════
@@ -251,6 +319,7 @@ def main():
     app.add_handler(CommandHandler("status", cmd_status))
     app.add_handler(CommandHandler("help", cmd_help))
     app.add_handler(CommandHandler("proxytest", cmd_proxytest))
+    app.add_handler(CommandHandler("balancetest", cmd_balancetest))
 
     # Scheduled jobs
     jq = app.job_queue
