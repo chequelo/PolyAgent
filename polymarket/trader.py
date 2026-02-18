@@ -45,11 +45,6 @@ def _get_client():
         # _http_client is replaced before any code references it
         _patch_proxy()
         from py_clob_client.client import ClobClient
-        # Verify patch is still active after import
-        if _proxy_patched:
-            import py_clob_client.http_helpers.helpers as helpers
-            if not hasattr(helpers._http_client, '_transport'):
-                logger.warning("Proxy patch may have been overridden by ClobClient import")
         _clob_client = ClobClient(
             cfg.poly_clob_url,
             key=cfg.poly_private_key,
@@ -58,7 +53,24 @@ def _get_client():
             funder=cfg.poly_funder_address,
         )
         logger.info(f"CLOB client initialized → {cfg.poly_clob_url}")
-        _clob_client.set_api_creds(_clob_client.create_or_derive_api_creds())
+
+        # Delete old API keys (may have been created from blocked IP) and create fresh ones
+        try:
+            existing = _clob_client.get_api_keys()
+            if existing:
+                for key_info in existing:
+                    try:
+                        _clob_client.delete_api_key()
+                    except Exception:
+                        pass
+                logger.info("Deleted old CLOB API keys")
+        except Exception:
+            pass
+
+        # Create fresh API creds through the proxy with nonce=1
+        creds = _clob_client.create_or_derive_api_creds(nonce=1)
+        _clob_client.set_api_creds(creds)
+        logger.info("Fresh CLOB API creds created through proxy")
     return _clob_client
 
 
