@@ -69,7 +69,9 @@ class Config:
     pos_check_interval_min: int = 5        # Check positions every 5 min
     pos_funding_timeout_hours: float = 24  # Close funding arb after 24h
     pos_spread_timeout_hours: float = 1    # Close spread after 1h
-    pos_stop_loss_pct: float = 0.05        # 5% stop loss
+    pos_stop_loss_pct: float = 0.05        # 5% stop loss (legacy, used by polling fallback)
+    pos_funding_tp_pct: float = 0.03       # 3% take-profit for funding arb (exchange-native)
+    pos_funding_sl_pct: float = 0.05       # 5% stop-loss for funding arb (exchange-native)
 
     # ── Research ──
     research_max_sources: int = 5

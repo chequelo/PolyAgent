@@ -34,6 +34,14 @@ class Position:
     other_symbol: str | None = None
     other_side: str | None = None
     other_order_id: str | None = None
+    # TP/SL order tracking (exchange-native orders)
+    tp_order_id: str | None = None
+    sl_order_id: str | None = None
+    tp_price: float | None = None
+    sl_price: float | None = None
+    # For spread: SL on the other leg
+    other_sl_order_id: str | None = None
+    other_sl_price: float | None = None
     # Close info (filled on close)
     close_time: str | None = None
     close_price: float | None = None
@@ -104,6 +112,10 @@ def create_funding_position(
     direction: str,
     pair: str,
     order_ids: list[str],
+    tp_order_id: str | None = None,
+    sl_order_id: str | None = None,
+    tp_price: float | None = None,
+    sl_price: float | None = None,
 ) -> Position:
     """Create and save a funding arb position."""
     pos = Position(
@@ -120,6 +132,10 @@ def create_funding_position(
         entry_rate=entry_rate,
         direction=direction,
         pair=pair,
+        tp_order_id=tp_order_id,
+        sl_order_id=sl_order_id,
+        tp_price=tp_price,
+        sl_price=sl_price,
     )
     save_position(pos)
     return pos
@@ -136,6 +152,10 @@ def create_spread_position(
     size_usd: float,
     buy_order_id: str,
     sell_order_id: str,
+    sl_order_id: str | None = None,
+    sl_price: float | None = None,
+    other_sl_order_id: str | None = None,
+    other_sl_price: float | None = None,
 ) -> Position:
     """Create and save a spread arb position (tracks both legs)."""
     pos = Position(
@@ -153,6 +173,10 @@ def create_spread_position(
         other_symbol=sell_symbol,
         other_side="short",
         other_order_id=sell_order_id,
+        sl_order_id=sl_order_id,
+        sl_price=sl_price,
+        other_sl_order_id=other_sl_order_id,
+        other_sl_price=other_sl_price,
     )
     save_position(pos)
     return pos

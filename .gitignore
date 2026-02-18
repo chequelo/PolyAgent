@@ -6,3 +6,6 @@ venv/
 *.log
 .DS_Store
 prediction_markets/
+data/positions.json
+.claude/
+cloudflare-proxy/.wrangler/
