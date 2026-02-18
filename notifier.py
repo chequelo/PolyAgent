@@ -136,8 +136,8 @@ async def notify_micro_arb(bot, opp: dict, result: dict):
     await send_message(bot, text)
 
 
-async def notify_scan_summary(bot, stats: dict):
-    """Send periodic scan summary."""
+async def notify_scan_summary(bot, stats: dict, diagnostics: dict | None = None):
+    """Send periodic scan summary with diagnostics."""
     text = (
         f"🔍 *SCAN COMPLETE*\n\n"
         f"📊 Predictions analyzed: {stats.get('predictions', 0)}\n"
@@ -145,6 +145,34 @@ async def notify_scan_summary(bot, stats: dict):
         f"⚡ Micro-arb signals: {stats.get('micro_arbs', 0)}\n"
         f"💹 Funding opportunities: {stats.get('funding', 0)}\n"
         f"📈 Spread opportunities: {stats.get('spreads', 0)}\n"
-        f"⏱ Next scan in {cfg.pm_scan_interval_hours}h"
     )
+
+    if diagnostics:
+        # Spread diagnostics
+        spread_diag = diagnostics.get("spreads", {})
+        if spread_diag:
+            best = spread_diag.get("best_spread", 0)
+            checked = spread_diag.get("pairs_checked", 0)
+            near = spread_diag.get("near_misses", [])
+            text += f"\n📉 *Spread diagnostics:*\n"
+            text += f"  Best: {best}% | Pairs: {checked}\n"
+            if near:
+                top = near[:4]
+                text += "  Near: " + ", ".join(f"{n['pair']} {n['spread']}%" for n in top) + "\n"
+
+        # Funding diagnostics
+        fund_diag = diagnostics.get("funding", {})
+        if fund_diag:
+            rates = fund_diag.get("rates", [])
+            if rates:
+                text += f"\n💹 *Top funding rates:*\n"
+                for r in rates[:4]:
+                    parts = [f"{r['pair']}: HL {r['hl_ann']:+.1f}%"]
+                    for k, v in r.items():
+                        if k.endswith("_ann") and k != "hl_ann":
+                            ex = k.replace("_ann", "")
+                            parts.append(f"{ex} {v:+.1f}%")
+                    text += "  " + " | ".join(parts) + "\n"
+
+    text += f"\n⏱ Next scan in {cfg.pm_scan_interval_hours}h"
     await send_message(bot, text)

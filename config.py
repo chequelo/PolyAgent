@@ -48,14 +48,20 @@ class Config:
     fr_scan_interval_min: int = 30    # Check every 30 min
 
     # ── Strategy: Cross-Exchange Spreads ──
-    spread_min_pct: float = 0.15      # 0.15% min spread
+    spread_min_pct: float = 0.10      # 0.10% min spread
     spread_max_position: float = 10.0 # Max $10 per side
     spread_exchanges: list = field(default_factory=lambda: ["binance", "bybit", "okx"])
     spread_pairs: list = field(default_factory=lambda: [
-        "BTC/USDT", "ETH/USDT", "SOL/USDT", "ARB/USDT",
-        "DOGE/USDT", "AVAX/USDT", "LINK/USDT", "WIF/USDT",
-        "SUI/USDT", "ONDO/USDT", "PENDLE/USDT", "TIA/USDT",
-        "SEI/USDT", "INJ/USDT", "PYTH/USDT", "JUP/USDT",
+        # Large caps (tight spreads, high volume)
+        "BTC/USDT", "ETH/USDT", "SOL/USDT",
+        # Mid caps (wider spreads possible)
+        "ARB/USDT", "DOGE/USDT", "AVAX/USDT", "LINK/USDT",
+        "SUI/USDT", "INJ/USDT", "SEI/USDT", "TIA/USDT",
+        # Smaller/newer (most likely to have spreads)
+        "WIF/USDT", "ONDO/USDT", "PENDLE/USDT", "PYTH/USDT",
+        "JUP/USDT", "W/USDT", "STRK/USDT", "MANTA/USDT",
+        "DYM/USDT", "PIXEL/USDT", "PORTAL/USDT", "AEVO/USDT",
+        "ENA/USDT", "ETHFI/USDT", "BOME/USDT", "MEW/USDT",
     ])
     spread_scan_interval_min: int = 5
 

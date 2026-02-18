@@ -92,7 +92,12 @@ async def full_scan(context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"Spread scan failed: {e}")
 
-    await notify_scan_summary(bot, stats)
+    # Collect diagnostics from scanners
+    from crypto.spreads import last_scan_diagnostics as spread_diag
+    from crypto.funding import last_scan_diagnostics as fund_diag
+    diagnostics = {"spreads": spread_diag, "funding": fund_diag}
+
+    await notify_scan_summary(bot, stats, diagnostics)
     logger.info(f"═══ Scan complete: {stats} ═══")
 
 
