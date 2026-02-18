@@ -78,8 +78,9 @@ def _validate_order(price: float, size: float) -> str | None:
     """Validate order params. Returns error string or None if valid."""
     if price < PM_MIN_PRICE or price > PM_MAX_PRICE:
         return f"Price ${price:.4f} out of range ({PM_MIN_PRICE}-{PM_MAX_PRICE})"
-    if size < PM_MIN_SIZE:
-        return f"Size {size:.2f} below minimum ({PM_MIN_SIZE})"
+    dollar_value = price * size
+    if dollar_value < PM_MIN_SIZE:
+        return f"Order ${dollar_value:.2f} below minimum (${PM_MIN_SIZE})"
     return None
 
 
@@ -98,7 +99,8 @@ async def execute_prediction_bet(market: dict, estimate: dict) -> dict:
     token_id = tokens[0] if side == "YES" else tokens[1]
     price = market["best_ask"] if side == "YES" else (1 - market["best_bid"])
     price = round(price, 2)  # CLOB uses 0.01 increments
-    size = round(estimate["kelly_bet"] / price, 2) if price > 0 else 0
+    bet_amount = max(estimate["kelly_bet"], PM_MIN_SIZE)  # Enforce $1 minimum
+    size = round(bet_amount / price, 2) if price > 0 else 0
 
     err = _validate_order(price, size)
     if err:
