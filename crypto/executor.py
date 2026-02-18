@@ -474,8 +474,28 @@ async def cancel_hl_order(order_id: str, coin: str) -> bool:
         return False
 
 
+_STABLECOINS = {"USDT", "USDC", "BUSD", "USD", "DAI", "TUSD", "USDP"}
+
+
+async def _token_to_usd(client, token: str, amount: float) -> float:
+    """Convert a token amount to USD using the exchange's ticker."""
+    if token in _STABLECOINS:
+        return amount
+    for quote in ("USDT", "USDC", "USD"):
+        symbol = f"{token}/{quote}"
+        if symbol in client.symbols:
+            try:
+                ticker = await client.fetch_ticker(symbol)
+                price = ticker.get("last") or 0
+                if price:
+                    return amount * price
+            except Exception:
+                pass
+    return 0.0  # can't price it → skip
+
+
 async def get_balances() -> dict:
-    """Get current balances from all configured exchanges."""
+    """Get current balances from all configured exchanges, converted to USD."""
     balances = {}
 
     for name in _available_exchanges():
@@ -517,12 +537,13 @@ async def get_balances() -> dict:
                     except Exception as e:
                         logger.debug(f"HL {account_type} balance: {e}")
 
-            if combined:
-                balances[name] = combined
-                logger.info(f"Balance {name}: {combined}")
-            else:
-                balances[name] = {}
-                logger.warning(f"No balance found for {name}")
+            # Convert all tokens to USD
+            usd_total = 0.0
+            for token, amount in combined.items():
+                usd_total += await _token_to_usd(client, token, amount)
+
+            balances[name] = usd_total
+            logger.info(f"Balance {name}: ${usd_total:.2f} (raw: {combined})")
 
         except Exception as e:
             logger.error(f"Balance fetch failed for {name}: {e}")
