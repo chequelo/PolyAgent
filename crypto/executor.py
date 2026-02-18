@@ -79,19 +79,19 @@ async def execute_funding_arb(opportunity: dict) -> dict:
             spot_symbol = pair
             if spot_symbol in client.symbols:
                 spot_order = await client.create_order(
-                    spot_symbol, "market", "buy", quantity
+                    spot_symbol, "market", "buy", quantity, price
                 )
                 results.append({"leg": "spot_buy", "order": str(spot_order.get("id", ""))})
 
             perp_order = await client.create_order(
-                opportunity["hl_symbol"], "market", "sell", quantity,
+                opportunity["hl_symbol"], "market", "sell", quantity, price,
                 params={"reduceOnly": False}
             )
             results.append({"leg": "perp_short", "order": str(perp_order.get("id", ""))})
 
         elif direction == "long_perp":
             perp_order = await client.create_order(
-                opportunity["hl_symbol"], "market", "buy", quantity,
+                opportunity["hl_symbol"], "market", "buy", quantity, price,
                 params={"reduceOnly": False}
             )
             results.append({"leg": "perp_long", "order": str(perp_order.get("id", ""))})
@@ -125,8 +125,7 @@ async def execute_spread_trade(opportunity: dict) -> dict:
     if not buy_client:
         return {"success": False, "error": f"No client for {buy_exchange}"}
     if not sell_client:
-        # One-sided execution: only execute on the exchange we have
-        return await _execute_one_leg(opportunity)
+        return {"success": False, "error": f"No client for {sell_exchange} — skipping (no 1-leg trades)"}
 
     pair = opportunity["pair"]
     buy_price = opportunity["buy_price"]
@@ -151,9 +150,9 @@ async def execute_spread_trade(opportunity: dict) -> dict:
         if not sell_symbol:
             return {"success": False, "error": f"{pair} not found on {sell_exchange}"}
 
-        # Execute both legs
-        buy_order = await buy_client.create_order(buy_symbol, "market", "buy", quantity)
-        sell_order = await sell_client.create_order(sell_symbol, "market", "sell", quantity)
+        # Execute both legs (pass price for HL slippage calculation)
+        buy_order = await buy_client.create_order(buy_symbol, "market", "buy", quantity, buy_price)
+        sell_order = await sell_client.create_order(sell_symbol, "market", "sell", quantity, sell_price)
 
         logger.info(
             f"Spread arb: BUY {pair} on {buy_exchange} @ ${buy_price:.4f}, "
@@ -176,54 +175,6 @@ async def execute_spread_trade(opportunity: dict) -> dict:
         logger.error(f"Spread trade failed: {e}")
         return {"success": False, "error": str(e)}
 
-
-async def _execute_one_leg(opportunity: dict) -> dict:
-    """Fallback: execute only one leg on the exchange we have a client for."""
-    available = _available_exchanges()
-    buy_ex = opportunity["buy_exchange"]
-    sell_ex = opportunity["sell_exchange"]
-
-    # Determine which side we can execute
-    if buy_ex in available:
-        exchange = buy_ex
-        side = "buy"
-        price = opportunity["buy_price"]
-        other = sell_ex
-    elif sell_ex in available:
-        exchange = sell_ex
-        side = "sell"
-        price = opportunity["sell_price"]
-        other = buy_ex
-    else:
-        return {"success": False, "error": "No authenticated exchange available"}
-
-    client = await _get_client(exchange)
-    if not client:
-        return {"success": False, "error": f"Client for {exchange} not ready"}
-
-    pair = opportunity["pair"]
-    size_usd = min(_get_bankroll(exchange) * 0.3, cfg.spread_max_position)
-    quantity = size_usd / price
-
-    try:
-        symbol = _find_symbol(client, pair)
-        if not symbol:
-            return {"success": False, "error": f"{pair} not found on {exchange}"}
-
-        order = await client.create_order(symbol, "market", side, quantity)
-        logger.info(f"Spread (1-leg): {side} {pair} on {exchange} @ ${price:.4f}")
-        return {
-            "success": True,
-            "side": side,
-            "price": price,
-            "quantity": quantity,
-            "order_id": str(order.get("id", "")),
-            "note": f"One-leg only. Execute {('sell' if side == 'buy' else 'buy')} on {other} manually.",
-        }
-
-    except Exception as e:
-        logger.error(f"One-leg spread failed: {e}")
-        return {"success": False, "error": str(e)}
 
 
 def _find_symbol(client: ccxt.Exchange, pair: str) -> str | None:
