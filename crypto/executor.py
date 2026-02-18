@@ -44,6 +44,23 @@ def _symbol_to_coin(symbol: str) -> str:
     return symbol.split("/")[0]
 
 
+def _hl_sz_decimals(coin: str) -> int:
+    """Get the szDecimals for a coin from the HL SDK metadata.
+
+    The SDK's float_to_wire() will reject quantities with too many decimals,
+    so all sz values must be rounded to this precision before submitting.
+    """
+    hl_sdk = _get_hl_sdk()
+    if not hl_sdk:
+        return 2  # safe fallback
+    try:
+        asset_id = hl_sdk.info.name_to_asset(coin)
+        return hl_sdk.info.asset_to_sz_decimals[asset_id]
+    except (KeyError, AttributeError) as e:
+        logger.warning(f"Could not get szDecimals for {coin}: {e}, using 2")
+        return 2
+
+
 async def _get_client(exchange: str) -> ccxt.Exchange | None:
     """Get or create an authenticated CCXT client for the given exchange."""
     if exchange in _clients:
@@ -115,22 +132,25 @@ async def execute_funding_arb(opportunity: dict) -> dict:
             return {"success": False, "error": "Could not fetch price"}
 
         price = ticker["last"]
-        quantity = size_usd / price
         coin = _symbol_to_coin(opportunity["hl_symbol"])
+        sz_dec = _hl_sz_decimals(coin)
+        quantity = round(size_usd / price, sz_dec)
 
         # Determine direction
         is_short = direction == "short_perp"
         is_buy_entry = not is_short  # short_perp → sell entry, long_perp → buy entry
 
-        # Calculate TP/SL trigger prices
+        # Calculate TP/SL trigger prices (max 5 sig figs, 6 decimals)
+        px_dec = max(0, 6 - sz_dec)  # HL rule: price decimals = 6 - szDecimals
         if is_short:
             # Short perp: profit when price drops, loss when price rises
-            tp_trigger = round(price * (1 - cfg.pos_funding_tp_pct), 6)
-            sl_trigger = round(price * (1 + cfg.pos_funding_sl_pct), 6)
+            tp_trigger = round(price * (1 - cfg.pos_funding_tp_pct), px_dec)
+            sl_trigger = round(price * (1 + cfg.pos_funding_sl_pct), px_dec)
         else:
             # Long perp: profit when price rises, loss when price drops
-            tp_trigger = round(price * (1 + cfg.pos_funding_tp_pct), 6)
-            sl_trigger = round(price * (1 - cfg.pos_funding_sl_pct), 6)
+            tp_trigger = round(price * (1 + cfg.pos_funding_tp_pct), px_dec)
+            sl_trigger = round(price * (1 - cfg.pos_funding_sl_pct), px_dec)
+        price = round(price, px_dec)
 
         # Build atomic order group: entry + TP + SL
         orders = [
@@ -245,6 +265,12 @@ async def _place_hl_sl_order(
     hl_sdk = _get_hl_sdk()
     if not hl_sdk:
         return ""
+
+    # Round to HL precision
+    sz_dec = _hl_sz_decimals(coin)
+    px_dec = max(0, 6 - sz_dec)
+    size = round(size, sz_dec)
+    trigger_price = round(trigger_price, px_dec)
 
     order = {
         "coin": coin,
