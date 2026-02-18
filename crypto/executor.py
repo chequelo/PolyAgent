@@ -256,12 +256,30 @@ async def get_balances() -> dict:
     for name in _available_exchanges():
         try:
             client = await _get_client(name)
-            if client:
+            if not client:
+                continue
+
+            combined = {}
+
+            if name == "hyperliquid":
+                # Hyperliquid has separate spot and perp (swap) accounts
+                for account_type in ["spot", "swap"]:
+                    try:
+                        bal = await client.fetch_balance({"type": account_type})
+                        total = bal.get("total", {})
+                        for k, v in total.items():
+                            if v and float(v) > 0:
+                                combined[k] = combined.get(k, 0) + float(v)
+                    except Exception:
+                        pass
+            else:
                 balance = await client.fetch_balance()
                 total = balance.get("total", {})
-                # Filter to non-zero balances
-                non_zero = {k: float(v) for k, v in total.items() if v and float(v) > 0}
-                balances[name] = non_zero
+                for k, v in total.items():
+                    if v and float(v) > 0:
+                        combined[k] = float(v)
+
+            balances[name] = combined
         except Exception as e:
             logger.error(f"Balance fetch failed for {name}: {e}")
 
