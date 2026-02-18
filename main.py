@@ -162,10 +162,16 @@ async def cmd_crypto(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     balances = await get_balances()
 
+    stablecoins = {"USDT", "USDC", "BUSD", "USD", "DAI", "TUSD", "USDP"}
+
     bal_lines = []
     for ex_name, ex_bals in balances.items():
-        total = sum(ex_bals.values())
-        bal_lines.append(f"  {ex_name}: ${total:.2f}")
+        stable_total = sum(v for k, v in ex_bals.items() if k in stablecoins)
+        other = {k: v for k, v in ex_bals.items() if k not in stablecoins}
+        parts = [f"${stable_total:.2f}"]
+        for token, amount in sorted(other.items()):
+            parts.append(f"{amount:.6g} {token}")
+        bal_lines.append(f"  {ex_name}: {' + '.join(parts)}")
 
     text = (
         f"🤖 *PolyAgent v2 Status*\n\n"
