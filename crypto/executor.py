@@ -18,6 +18,7 @@ async def _get_client(exchange: str) -> ccxt.Exchange | None:
             "privateKey": cfg.hl_private_key,
             "walletAddress": cfg.hl_wallet_address,
             "enableRateLimit": True,
+            "options": {"builderFee": False},
         })
         await client.load_markets()
         _clients[exchange] = client

@@ -25,7 +25,7 @@ async def scan_funding_rates() -> list[dict]:
     near_misses = []
 
     exchanges = {
-        "hyperliquid": ccxt.hyperliquid({"enableRateLimit": True}),
+        "hyperliquid": ccxt.hyperliquid({"enableRateLimit": True, "options": {"builderFee": False}}),
     }
 
     for name in cfg.spread_exchanges:
