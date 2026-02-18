@@ -3,12 +3,11 @@
 Strategy: When funding rate is highly positive (longs pay shorts), we:
   1. Buy spot on Hyperliquid
   2. Short perpetual on Hyperliquid (same size)
-  → Delta neutral position that collects funding every hour
+  -> Delta neutral position that collects funding every hour
 
 When funding rate is highly negative (shorts pay longs):
-  1. Sell/short spot (or skip)
-  2. Long perpetual on Hyperliquid
-  → Collect negative funding
+  1. Long perpetual on Hyperliquid
+  -> Collect negative funding
 
 Hyperliquid funding is paid every 1 hour (vs 8h on Binance).
 """
@@ -43,21 +42,18 @@ async def scan_funding_rates() -> list[dict]:
         await hl.load_markets()
 
         # Get all perpetual markets on Hyperliquid
-        perp_symbols = [
-            s for s in hl.symbols
-            if hl.markets[s].get("swap") or hl.markets[s].get("linear")
-        ]
+        perp_symbols = {}
+        for s, m in hl.markets.items():
+            if m.get("swap") or m.get("linear"):
+                base = m.get("base", "")
+                if base:
+                    perp_symbols[base] = s
 
-        # Fetch funding rates for top pairs
-        target_pairs = cfg.spread_pairs
-        for pair in target_pairs:
-            # Find matching perp symbol on Hyperliquid
-            perp_symbol = None
-            for s in perp_symbols:
-                base = pair.split("/")[0]
-                if base in s and ("USDT" in s or "USDC" in s or "USD" in s):
-                    perp_symbol = s
-                    break
+        near_misses = []
+
+        for pair in cfg.spread_pairs:
+            base = pair.split("/")[0]
+            perp_symbol = perp_symbols.get(base)
 
             if not perp_symbol:
                 continue
@@ -77,11 +73,10 @@ async def scan_funding_rates() -> list[dict]:
                         continue
                     try:
                         await ex.load_markets()
-                        # Find matching perp
-                        for s in ex.symbols:
-                            base = pair.split("/")[0]
-                            if (base in s and ("USDT" in s) and
-                                (ex.markets[s].get("swap") or ex.markets[s].get("linear"))):
+                        for s, m in ex.markets.items():
+                            if (m.get("base") == base and
+                                (m.get("swap") or m.get("linear")) and
+                                m.get("quote") in ("USDT", "USDC")):
                                 f = await ex.fetch_funding_rate(s)
                                 comparison_rates[name] = {
                                     "rate": f.get("fundingRate", 0) or 0,
@@ -92,13 +87,15 @@ async def scan_funding_rates() -> list[dict]:
                         pass
 
                 abs_rate = abs(rate)
-                if abs_rate >= cfg.fr_min_rate / 100 and abs(annualized) >= cfg.fr_min_annualized:
+                abs_annualized = abs(annualized)
+
+                if abs_rate >= cfg.fr_min_rate / 100 and abs_annualized >= cfg.fr_min_annualized:
                     # Determine strategy direction
                     if rate > 0:
-                        strategy = "LONG_SPOT + SHORT_PERP (longs pay shorts → collect)"
+                        strategy = "LONG_SPOT + SHORT_PERP (longs pay shorts)"
                         direction = "short_perp"
                     else:
-                        strategy = "SHORT_SPOT + LONG_PERP (shorts pay longs → collect)"
+                        strategy = "LONG_PERP (shorts pay longs)"
                         direction = "long_perp"
 
                     opportunities.append({
@@ -112,14 +109,19 @@ async def scan_funding_rates() -> list[dict]:
                         "comparison": comparison_rates,
                         "position_size": min(cfg.fr_max_position, cfg.hl_bankroll * 0.4),
                     })
+                elif abs_annualized >= 3.0:
+                    # Track near-misses for diagnostics
+                    near_misses.append(f"{base}: {annualized:+.1f}% ann")
 
             except Exception as e:
                 logger.debug(f"Funding rate fetch failed for {pair}: {e}")
 
+        if near_misses:
+            logger.info(f"Funding near-misses (below {cfg.fr_min_annualized}% ann): {', '.join(near_misses)}")
+
     except Exception as e:
         logger.error(f"Funding rate scan failed: {e}")
     finally:
-        # Close all exchange connections
         for ex in exchanges.values():
             try:
                 await ex.close()

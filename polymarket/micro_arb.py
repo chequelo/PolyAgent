@@ -1,32 +1,17 @@
 """Polymarket Micro-Arbitrage — 15-min & 5-min BTC/ETH/SOL crypto markets.
 
-Based on the Clawdbot/Moltbot strategy ($313 → $414K) but adapted for
-Polymarket's new dynamic taker fee structure (up to 3.15% near 50/50).
-
 Strategy: MAKER-ONLY latency arbitrage
-─────────────────────────────────────
-1. Monitor BTC/ETH/SOL spot prices on Binance/Bybit in real-time via CCXT
-2. Detect sharp moves (>0.3% in 60 seconds)
+1. Monitor BTC/ETH/SOL spot prices on Binance via recent 1-minute candles
+2. Detect sharp moves (>0.20% in last 5 minutes)
 3. Place LIMIT (maker) orders on Polymarket 15-min/5-min markets BEFORE
    the Polymarket odds adjust — makers pay ZERO fees and earn daily rebates
 4. When Polymarket odds catch up, our orders get filled at favorable prices
 
 Why maker-only:
-- Taker fees: up to 3.15% near 50/50 → kills taker arb profits
+- Taker fees: up to 3.15% near 50/50 -> kills taker arb profits
 - Maker fees: 0% + daily USDC rebates from the taker fee pool
-- We provide liquidity on the "correct" side after detecting the spot move
-
-Market types monitored:
-- 15-minute Up/Down: BTC, ETH, SOL, XRP
-- 5-minute Up/Down: BTC (newer, potentially less efficient)
-- Hourly Up/Down: BTC, ETH (wider windows, less competition)
-
-Risk: Orders may not fill if Polymarket adjusts too fast.
-      Spot reversal before 15-min/5-min window closes.
 """
-import asyncio
 import json
-import time
 import logging
 import httpx
 import ccxt.async_support as ccxt
@@ -34,7 +19,7 @@ from config import cfg
 
 logger = logging.getLogger("polyagent.pm.micro_arb")
 
-# ── Configuration ──
+# Configuration
 MICRO_ARB_CONFIG = {
     "spot_exchange": "binance",
     "assets": ["BTC", "ETH", "SOL"],
@@ -43,22 +28,60 @@ MICRO_ARB_CONFIG = {
         "ETH": "ETH/USDT",
         "SOL": "SOL/USDT",
     },
-    "move_threshold_pct": 0.30,     # 0.30% move triggers signal
-    "lookback_seconds": 60,         # Detect moves within last 60 seconds
-    "scan_interval_seconds": 10,    # Check every 10 seconds
-    "max_bet_per_trade": 3.0,       # Max $3 per micro-arb trade
-    "min_edge_pct": 1.0,            # Min 1% edge over implied probability
-    "market_durations": ["15M", "5M", "1H"],  # Market windows to scan
+    "move_threshold_pct": 0.20,     # 0.20% move triggers signal
+    "candle_count": 5,              # Look at last 5 one-minute candles
+    "max_bet_per_trade": 3.0,
+    "min_edge_pct": 0.8,            # Min 0.8% edge over implied probability
+    "market_durations": ["15M", "5M", "1H"],
 }
 
-# ── Gamma API helpers ──
 GAMMA_API = "https://gamma-api.polymarket.com"
+
+
+async def _detect_spot_moves() -> dict[str, dict]:
+    """Detect recent spot price moves using 1-minute candles from Binance."""
+    exchange = ccxt.binance({"enableRateLimit": True})
+    moves = {}
+    try:
+        await exchange.load_markets()
+        for asset, pair in MICRO_ARB_CONFIG["spot_pairs"].items():
+            try:
+                # Fetch last N 1-minute candles
+                candles = await exchange.fetch_ohlcv(
+                    pair, timeframe="1m", limit=MICRO_ARB_CONFIG["candle_count"]
+                )
+                if not candles or len(candles) < 2:
+                    continue
+
+                # candle format: [timestamp, open, high, low, close, volume]
+                oldest_close = candles[0][4]
+                newest_close = candles[-1][4]
+                move_pct = (newest_close - oldest_close) / oldest_close * 100
+
+                if abs(move_pct) >= MICRO_ARB_CONFIG["move_threshold_pct"]:
+                    moves[asset] = {
+                        "asset": asset,
+                        "direction": "UP" if move_pct > 0 else "DOWN",
+                        "move_pct": move_pct,
+                        "old_price": oldest_close,
+                        "new_price": newest_close,
+                        "candles": len(candles),
+                    }
+                    logger.info(f"Spot move: {asset} {move_pct:+.3f}% over {len(candles)} min")
+                else:
+                    logger.debug(f"No move: {asset} {move_pct:+.3f}% (threshold: {MICRO_ARB_CONFIG['move_threshold_pct']}%)")
+
+            except Exception as e:
+                logger.debug(f"Failed to fetch candles for {asset}: {e}")
+    finally:
+        await exchange.close()
+
+    return moves
 
 
 async def _fetch_active_crypto_markets(duration: str = "15M") -> list[dict]:
     """Fetch active short-duration crypto prediction markets from Gamma API."""
     async with httpx.AsyncClient(timeout=15) as client:
-        # Search for active crypto up/down markets
         resp = await client.get(f"{GAMMA_API}/markets", params={
             "active": "true",
             "closed": "false",
@@ -80,7 +103,6 @@ async def _fetch_active_crypto_markets(duration: str = "15M") -> list[dict]:
 
     for m in markets:
         question = (m.get("question", "") or "").lower()
-        # Check if it's a short-duration up/down market
         is_duration_match = any(kw in question for kw in keywords)
         is_up_down = any(word in question for word in ["up", "down", "above", "below"])
         is_crypto = any(asset.lower() in question for asset in MICRO_ARB_CONFIG["assets"])
@@ -89,11 +111,10 @@ async def _fetch_active_crypto_markets(duration: str = "15M") -> list[dict]:
             try:
                 prices_str = m.get("outcomePrices", "")
                 prices = json.loads(prices_str) if isinstance(prices_str, str) else prices_str
-                if len(prices) >= 2:
-                    yes_price = float(prices[0])
-                    no_price = float(prices[1])
-                else:
+                if len(prices) < 2:
                     continue
+                yes_price = float(prices[0])
+                no_price = float(prices[1])
 
                 filtered.append({
                     "id": m.get("id"),
@@ -117,91 +138,12 @@ async def _fetch_active_crypto_markets(duration: str = "15M") -> list[dict]:
     return filtered
 
 
-async def _get_spot_prices() -> dict[str, float]:
-    """Get current spot prices from Binance."""
-    exchange = ccxt.binance({"enableRateLimit": True})
-    prices = {}
-    try:
-        await exchange.load_markets()
-        for asset, pair in MICRO_ARB_CONFIG["spot_pairs"].items():
-            try:
-                ticker = await exchange.fetch_ticker(pair)
-                if ticker and ticker.get("last"):
-                    prices[asset] = ticker["last"]
-            except Exception:
-                pass
-    finally:
-        await exchange.close()
-    return prices
-
-
-class SpotMonitor:
-    """Tracks recent spot price history to detect sharp moves."""
-
-    def __init__(self):
-        self.history: dict[str, list[tuple[float, float]]] = {}  # asset -> [(timestamp, price)]
-        self.max_history = 120  # Keep 2 minutes of data
-
-    def add_price(self, asset: str, price: float):
-        ts = time.time()
-        if asset not in self.history:
-            self.history[asset] = []
-        self.history[asset].append((ts, price))
-        # Trim old data
-        cutoff = ts - self.max_history
-        self.history[asset] = [(t, p) for t, p in self.history[asset] if t > cutoff]
-
-    def detect_move(self, asset: str) -> dict | None:
-        """Detect if asset moved > threshold in lookback window."""
-        if asset not in self.history or len(self.history[asset]) < 2:
-            return None
-
-        now = time.time()
-        lookback = MICRO_ARB_CONFIG["lookback_seconds"]
-        recent = [(t, p) for t, p in self.history[asset] if t > now - lookback]
-
-        if len(recent) < 2:
-            return None
-
-        oldest_price = recent[0][1]
-        newest_price = recent[-1][1]
-        move_pct = (newest_price - oldest_price) / oldest_price * 100
-
-        if abs(move_pct) >= MICRO_ARB_CONFIG["move_threshold_pct"]:
-            return {
-                "asset": asset,
-                "direction": "UP" if move_pct > 0 else "DOWN",
-                "move_pct": move_pct,
-                "old_price": oldest_price,
-                "new_price": newest_price,
-                "seconds": now - recent[0][0],
-            }
-        return None
-
-
 async def scan_micro_arb() -> list[dict]:
-    """Full micro-arb scan: detect spot moves + find mispriced PM markets."""
+    """Full micro-arb scan: detect spot moves via candles + find mispriced PM markets."""
     opportunities = []
-    monitor = SpotMonitor()
 
-    # Get current + recent spot prices (2 samples, 10s apart)
-    prices_1 = await _get_spot_prices()
-    for asset, price in prices_1.items():
-        monitor.add_price(asset, price)
-
-    await asyncio.sleep(5)
-
-    prices_2 = await _get_spot_prices()
-    for asset, price in prices_2.items():
-        monitor.add_price(asset, price)
-
-    # Check for moves
-    moves = {}
-    for asset in MICRO_ARB_CONFIG["assets"]:
-        move = monitor.detect_move(asset)
-        if move:
-            moves[asset] = move
-            logger.info(f"Spot move detected: {asset} {move['direction']} {move['move_pct']:.3f}%")
+    # Detect moves using candle data (no sleep needed)
+    moves = await _detect_spot_moves()
 
     if not moves:
         logger.debug("No significant spot moves detected")
@@ -220,22 +162,14 @@ async def scan_micro_arb() -> list[dict]:
                 yes_price = market["yes_price"]
                 no_price = market["no_price"]
 
-                # If spot moved UP, "Up" (YES) should be worth more
-                # If PM still shows old odds, there's an edge
                 if move["direction"] == "UP":
-                    # We want to BUY YES (before odds adjust up)
-                    # Fair value of YES should be higher than current price
                     implied_prob = yes_price
-                    # Simple model: if spot moved 0.5% up in 60s, UP is more likely
-                    # Rough heuristic: 0.3% move ≈ 5% probability shift
-                    prob_boost = min(abs(move["move_pct"]) * 15, 20) / 100  # Max 20% boost
+                    prob_boost = min(abs(move["move_pct"]) * 15, 20) / 100
                     estimated_fair = min(implied_prob + prob_boost, 0.95)
                     edge = estimated_fair - yes_price
                     side = "YES"
                     entry_price = yes_price
-
-                else:  # DOWN
-                    # We want to BUY NO (before odds adjust)
+                else:
                     implied_prob = no_price
                     prob_boost = min(abs(move["move_pct"]) * 15, 20) / 100
                     estimated_fair = min(implied_prob + prob_boost, 0.95)
@@ -248,7 +182,7 @@ async def scan_micro_arb() -> list[dict]:
                 if edge_pct >= MICRO_ARB_CONFIG["min_edge_pct"]:
                     bet_size = min(
                         MICRO_ARB_CONFIG["max_bet_per_trade"],
-                        cfg.poly_bankroll * 0.15,  # Max 15% of bankroll
+                        cfg.poly_bankroll * 0.15,
                     )
 
                     opportunities.append({
@@ -265,7 +199,7 @@ async def scan_micro_arb() -> list[dict]:
                         "bet_size": bet_size,
                         "tokens": market["tokens"],
                         "strategy": "MAKER_LIMIT",
-                        "note": f"Spot {asset} moved {move['move_pct']:+.3f}% → "
+                        "note": f"Spot {asset} moved {move['move_pct']:+.3f}% -> "
                                 f"Buy {side} @ ${entry_price:.3f} (fair: ${estimated_fair:.3f})",
                     })
 
@@ -301,7 +235,6 @@ async def execute_micro_arb(opportunity: dict) -> dict:
         from py_clob_client.clob_types import OrderArgs, OrderType
         from py_clob_client.order_builder.constants import BUY
 
-        # Place as GTC LIMIT order (maker = no fees + rebates)
         order = OrderArgs(
             token_id=token_id,
             price=price,

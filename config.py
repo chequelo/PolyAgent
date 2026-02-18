@@ -37,17 +37,19 @@ class Config:
     pm_arb_max_bet: float = 10.0      # Max $10 per arb
 
     # ── Strategy: Funding Rate Arbitrage ──
-    fr_min_rate: float = 0.01         # 0.01% min funding rate per period
-    fr_min_annualized: float = 10.0   # 10% min annualized return
+    fr_min_rate: float = 0.005        # 0.005% min funding rate per period
+    fr_min_annualized: float = 5.0    # 5% min annualized return
     fr_max_position: float = 10.0     # Max $10 per side
     fr_scan_interval_min: int = 30    # Check every 30 min
 
     # ── Strategy: Cross-Exchange Spreads ──
-    spread_min_pct: float = 0.3       # 0.3% min spread after fees
+    spread_min_pct: float = 0.15      # 0.15% min spread
     spread_exchanges: list = field(default_factory=lambda: ["binance", "bybit", "okx"])
     spread_pairs: list = field(default_factory=lambda: [
         "BTC/USDT", "ETH/USDT", "SOL/USDT", "ARB/USDT",
-        "DOGE/USDT", "AVAX/USDT", "LINK/USDT", "WIF/USDT"
+        "DOGE/USDT", "AVAX/USDT", "LINK/USDT", "WIF/USDT",
+        "SUI/USDT", "ONDO/USDT", "PENDLE/USDT", "TIA/USDT",
+        "SEI/USDT", "INJ/USDT", "PYTH/USDT", "JUP/USDT",
     ])
     spread_scan_interval_min: int = 5
 
