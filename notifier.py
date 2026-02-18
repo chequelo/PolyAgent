@@ -90,12 +90,17 @@ async def notify_spread(bot, opp: dict, result: dict):
     """Send cross-exchange spread with execution result."""
     if result.get("success"):
         note = result.get("note", "")
-        status = f"✅ Executed\n{note}" if note else "✅ Executed"
+        both = "BOTH LEGS" if "buy_order_id" in result and "sell_order_id" in result else "1 LEG"
+        status = f"✅ {both} executed"
+        if note:
+            status += f"\n{note}"
     else:
         status = f"❌ Failed: {result.get('error', 'unknown')}"
 
+    both_exec = "DUAL" if opp.get("both_executable") else "SINGLE"
+
     text = (
-        f"📊 *SPREAD — AUTO-EXECUTED*\n\n"
+        f"📊 *SPREAD — AUTO-EXECUTED ({both_exec})*\n\n"
         f"📍 {opp['pair']}\n"
         f"🟢 Buy on *{opp['buy_exchange']}*: ${opp['buy_price']:.4f}\n"
         f"🔴 Sell on *{opp['sell_exchange']}*: ${opp['sell_price']:.4f}\n"

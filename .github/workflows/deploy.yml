@@ -19,7 +19,11 @@ jobs:
             git pull origin main
             sed -i '/^POLY_CLOB_PROXY_URL/d' .env 2>/dev/null
             sed -i '/^POLY_PROXY_URL/d' .env 2>/dev/null
+            sed -i '/^BINANCE_API_KEY/d' .env 2>/dev/null
+            sed -i '/^BINANCE_SECRET/d' .env 2>/dev/null
             echo 'POLY_PROXY_URL=${{ secrets.POLY_PROXY_URL }}' >> .env
+            echo 'BINANCE_API_KEY=${{ secrets.BINANCE_API_KEY }}' >> .env
+            echo 'BINANCE_SECRET=${{ secrets.BINANCE_SECRET }}' >> .env
             docker compose build --quiet
             docker compose up -d
             echo "✅ Deployed at $(date)"

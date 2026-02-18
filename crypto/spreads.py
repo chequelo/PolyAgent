@@ -1,8 +1,8 @@
 """Cross-Exchange Spread Scanner — Detect price discrepancies across CEXs.
 
-Monitors price differences between Hyperliquid and major CEXs.
-Hyperliquid is mainly a perp exchange, so we compare its perp prices
-against spot prices on Binance/Bybit/OKX. Only executes on Hyperliquid.
+Scans for price spreads between all exchange pairs where we have execution
+capability (Hyperliquid and/or Binance). Prioritizes two-sided trades
+(both legs executable) over one-sided.
 """
 import asyncio
 import logging
@@ -11,21 +11,35 @@ from config import cfg
 
 logger = logging.getLogger("polyagent.crypto.spreads")
 
-# Reject spreads above this as likely data errors
 MAX_PLAUSIBLE_SPREAD_PCT = 2.0
+
+
+def _executable_exchanges() -> set[str]:
+    """Exchanges where we have API keys for execution."""
+    execs = set()
+    if cfg.hl_private_key:
+        execs.add("hyperliquid")
+    if cfg.binance_api_key:
+        execs.add("binance")
+    return execs
 
 
 async def scan_spreads() -> list[dict]:
     """Scan for cross-exchange price spreads.
 
-    Compare Hyperliquid prices against each other exchange individually.
-    Only report spreads where Hyperliquid is on one side.
+    Compares prices across all exchanges, only reports opportunities
+    where at least one side is an executable exchange.
     """
     opportunities = []
+    exec_exchanges = _executable_exchanges()
 
-    # Initialize exchanges
+    if not exec_exchanges:
+        logger.warning("No executable exchanges configured, skipping spread scan")
+        return []
+
+    # Initialize all exchanges (public API for price scanning)
     exchanges = {}
-    all_names = ["hyperliquid"] + cfg.spread_exchanges
+    all_names = list(set(["hyperliquid"] + cfg.spread_exchanges))
     for name in all_names:
         try:
             exchange_class = getattr(ccxt, name)
@@ -33,111 +47,106 @@ async def scan_spreads() -> list[dict]:
         except Exception as e:
             logger.debug(f"Failed to init {name}: {e}")
 
-    if "hyperliquid" not in exchanges:
-        logger.error("Hyperliquid not available, skipping spread scan")
-        return []
-
     try:
-        # Load all markets in parallel
         load_tasks = [ex.load_markets() for ex in exchanges.values()]
         await asyncio.gather(*load_tasks, return_exceptions=True)
 
-        hl = exchanges["hyperliquid"]
         near_misses = []
 
         for pair in cfg.spread_pairs:
-            base = pair.split("/")[0]
+            base, quote = pair.split("/")
 
-            # Get Hyperliquid price (perp or spot)
-            hl_symbol = _find_hl_symbol(hl, base)
-            if not hl_symbol:
-                continue
-
-            try:
-                hl_ticker = await hl.fetch_ticker(hl_symbol)
-                if not hl_ticker or not hl_ticker.get("bid") or not hl_ticker.get("ask"):
-                    continue
-                hl_bid = hl_ticker["bid"]
-                hl_ask = hl_ticker["ask"]
-            except Exception:
-                continue
-
-            # Compare against each other exchange (spot only)
+            # Fetch prices from all exchanges
+            prices = {}
             for name, ex in exchanges.items():
-                if name == "hyperliquid":
+                symbol = _find_symbol(ex, base, quote, name)
+                if not symbol:
                     continue
-
-                spot_symbol = _find_spot_symbol(ex, pair)
-                if not spot_symbol:
-                    continue
-
                 try:
-                    ticker = await ex.fetch_ticker(spot_symbol)
-                    if not ticker or not ticker.get("bid") or not ticker.get("ask"):
-                        continue
-                    ex_bid = ticker["bid"]
-                    ex_ask = ticker["ask"]
+                    ticker = await ex.fetch_ticker(symbol)
+                    if ticker and ticker.get("bid") and ticker.get("ask"):
+                        prices[name] = {
+                            "bid": ticker["bid"],
+                            "ask": ticker["ask"],
+                            "symbol": symbol,
+                        }
                 except Exception:
-                    continue
+                    pass
 
-                # Check both directions:
-                # 1. Buy on HL, sell on other exchange
-                spread_buy_hl = (ex_bid - hl_ask) / hl_ask * 100
-                # 2. Buy on other exchange, sell on HL
-                spread_buy_other = (hl_bid - ex_ask) / ex_ask * 100
+            if len(prices) < 2:
+                continue
 
-                # Pick the better direction
-                if spread_buy_hl > spread_buy_other:
-                    spread_pct = spread_buy_hl
-                    buy_exchange = "hyperliquid"
-                    buy_price = hl_ask
-                    sell_exchange = name
-                    sell_price = ex_bid
-                else:
-                    spread_pct = spread_buy_other
-                    buy_exchange = name
-                    buy_price = ex_ask
-                    sell_exchange = "hyperliquid"
-                    sell_price = hl_bid
+            # Compare all pairs of exchanges
+            exchange_names = list(prices.keys())
+            for i in range(len(exchange_names)):
+                for j in range(i + 1, len(exchange_names)):
+                    ex_a = exchange_names[i]
+                    ex_b = exchange_names[j]
 
-                # Reject implausible spreads
-                if spread_pct > MAX_PLAUSIBLE_SPREAD_PCT:
-                    logger.warning(
-                        f"Rejecting implausible {pair}: {spread_pct:.2f}% "
-                        f"(HL {hl_symbol} bid/ask={hl_bid}/{hl_ask} vs "
-                        f"{name} {spot_symbol} bid/ask={ex_bid}/{ex_ask})"
-                    )
-                    continue
+                    # At least one side must be executable
+                    a_exec = ex_a in exec_exchanges
+                    b_exec = ex_b in exec_exchanges
+                    if not a_exec and not b_exec:
+                        continue
 
-                if spread_pct < 0:
-                    continue
+                    a_bid = prices[ex_a]["bid"]
+                    a_ask = prices[ex_a]["ask"]
+                    b_bid = prices[ex_b]["bid"]
+                    b_ask = prices[ex_b]["ask"]
 
-                fee_pct = 0.20  # ~0.1% maker each side
-                net_profit_pct = spread_pct - fee_pct
+                    # Direction 1: buy on A, sell on B
+                    spread_ab = (b_bid - a_ask) / a_ask * 100
+                    # Direction 2: buy on B, sell on A
+                    spread_ba = (a_bid - b_ask) / b_ask * 100
 
-                if spread_pct >= cfg.spread_min_pct and net_profit_pct > 0:
-                    position = min(cfg.hl_bankroll * 0.3, 10.0)
-                    est_profit = position * net_profit_pct / 100
+                    if spread_ab > spread_ba:
+                        spread_pct = spread_ab
+                        buy_ex, sell_ex = ex_a, ex_b
+                        buy_price, sell_price = a_ask, b_bid
+                    else:
+                        spread_pct = spread_ba
+                        buy_ex, sell_ex = ex_b, ex_a
+                        buy_price, sell_price = b_ask, a_bid
 
-                    opportunities.append({
-                        "pair": pair,
-                        "buy_exchange": buy_exchange,
-                        "buy_price": buy_price,
-                        "sell_exchange": sell_exchange,
-                        "sell_price": sell_price,
-                        "spread_pct": round(spread_pct, 4),
-                        "net_profit_pct": round(net_profit_pct, 4),
-                        "est_profit_usd": round(est_profit, 4),
-                        "all_prices": {
-                            "hyperliquid": {"bid": hl_bid, "ask": hl_ask, "symbol": hl_symbol},
-                            name: {"bid": ex_bid, "ask": ex_ask, "symbol": spot_symbol},
-                        },
-                        "executable": True,
-                    })
-                elif spread_pct > 0.05:
-                    near_misses.append(
-                        f"{pair}: {spread_pct:.3f}% (HL vs {name})"
-                    )
+                    if spread_pct <= 0:
+                        continue
+
+                    if spread_pct > MAX_PLAUSIBLE_SPREAD_PCT:
+                        logger.warning(
+                            f"Rejecting implausible {pair}: {spread_pct:.2f}% "
+                            f"({buy_ex} ask={buy_price} vs {sell_ex} bid={sell_price})"
+                        )
+                        continue
+
+                    both_executable = buy_ex in exec_exchanges and sell_ex in exec_exchanges
+
+                    fee_pct = 0.20  # ~0.1% maker each side
+                    net_profit_pct = spread_pct - fee_pct
+
+                    if spread_pct >= cfg.spread_min_pct and net_profit_pct > 0:
+                        position = min(cfg.spread_max_position, 10.0)
+                        est_profit = position * net_profit_pct / 100
+
+                        opportunities.append({
+                            "pair": pair,
+                            "buy_exchange": buy_ex,
+                            "buy_price": buy_price,
+                            "sell_exchange": sell_ex,
+                            "sell_price": sell_price,
+                            "spread_pct": round(spread_pct, 4),
+                            "net_profit_pct": round(net_profit_pct, 4),
+                            "est_profit_usd": round(est_profit, 4),
+                            "both_executable": both_executable,
+                            "all_prices": {
+                                buy_ex: {"bid": prices[buy_ex]["bid"], "ask": prices[buy_ex]["ask"]},
+                                sell_ex: {"bid": prices[sell_ex]["bid"], "ask": prices[sell_ex]["ask"]},
+                            },
+                            "executable": True,
+                        })
+                    elif spread_pct > 0.05:
+                        near_misses.append(
+                            f"{pair}: {spread_pct:.3f}% ({buy_ex}->{sell_ex})"
+                        )
 
         if near_misses:
             logger.info(f"Spread near-misses: {', '.join(near_misses[:8])}")
@@ -151,41 +160,23 @@ async def scan_spreads() -> list[dict]:
             except Exception:
                 pass
 
-    opportunities.sort(key=lambda x: x["net_profit_pct"], reverse=True)
+    # Sort: two-sided first, then by profit
+    opportunities.sort(key=lambda x: (x["both_executable"], x["net_profit_pct"]), reverse=True)
     logger.info(f"Spread scan: {len(opportunities)} opportunities found")
     return opportunities
 
 
-def _find_hl_symbol(hl, base: str) -> str | None:
-    """Find the best Hyperliquid symbol for a base asset (perp or spot)."""
-    # Try spot first
-    for symbol, market in hl.markets.items():
-        if (market.get("base") == base and
-            market.get("spot", False) and
-            market.get("quote") in ("USDT", "USDC", "USD")):
-            return symbol
+def _find_symbol(exchange, base: str, quote: str, exchange_name: str) -> str | None:
+    """Find the best symbol for a base/quote pair on an exchange."""
+    pair = f"{base}/{quote}"
 
-    # Fall back to perpetual
-    for symbol, market in hl.markets.items():
-        if (market.get("base") == base and
-            (market.get("swap") or market.get("linear")) and
-            not market.get("option") and
-            market.get("quote") in ("USDT", "USDC", "USD")):
-            return symbol
-
-    return None
-
-
-def _find_spot_symbol(exchange, pair: str) -> str | None:
-    """Find the exact spot symbol for a pair on an exchange. Spot only, no perps."""
-    # Try direct match
+    # 1. Try exact spot match
     if pair in exchange.symbols:
         market = exchange.markets[pair]
         if market.get("spot", False) and not market.get("swap") and not market.get("future"):
             return pair
 
-    # Search for matching spot market
-    base, quote = pair.split("/")
+    # 2. Search for spot market
     for symbol, market in exchange.markets.items():
         if (market.get("base") == base and
             market.get("quote") == quote and
@@ -194,5 +185,14 @@ def _find_spot_symbol(exchange, pair: str) -> str | None:
             not market.get("future") and
             not market.get("option")):
             return symbol
+
+    # 3. For Hyperliquid only: fall back to linear perpetual
+    if exchange_name == "hyperliquid":
+        for symbol, market in exchange.markets.items():
+            if (market.get("base") == base and
+                (market.get("swap") or market.get("linear")) and
+                not market.get("option") and
+                market.get("quote") in ("USDT", "USDC", "USD")):
+                return symbol
 
     return None

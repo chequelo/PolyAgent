@@ -153,15 +153,20 @@ async def cmd_crypto(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    hl_bal = await get_balances()
-    hl_total = sum(float(v) for v in hl_bal.get("total", {}).values() if v)
+    balances = await get_balances()
+
+    bal_lines = []
+    for ex_name, ex_bals in balances.items():
+        total = sum(ex_bals.values())
+        bal_lines.append(f"  {ex_name}: ${total:.2f}")
 
     text = (
         f"🤖 *PolyAgent v2 Status*\n\n"
         f"💰 *Polymarket bankroll:* ${cfg.poly_bankroll}\n"
-        f"💰 *Hyperliquid balance:* ${hl_total:.2f}\n"
+        f"💰 *Exchange balances:*\n" + "\n".join(bal_lines or ["  (none)"]) + "\n"
         f"🔑 PM keys: {'✅' if cfg.poly_private_key else '❌'}\n"
         f"🔑 HL keys: {'✅' if cfg.hl_private_key else '❌'}\n"
+        f"🔑 Binance: {'✅' if cfg.binance_api_key else '❌'}\n"
         f"🧠 Claude: {'✅' if cfg.anthropic_key else '❌'}\n"
         f"🔎 Tavily: {'✅' if cfg.tavily_key else '❌'}\n\n"
         f"⏱ PM scan: every {cfg.pm_scan_interval_hours}h\n"

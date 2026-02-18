@@ -22,6 +22,11 @@ class Config:
     hl_wallet_address: str = ""       # ETH wallet address (public)
     hl_bankroll: float = 20.0
 
+    # ── Binance ──
+    binance_api_key: str = ""
+    binance_secret: str = ""
+    binance_bankroll: float = 20.0
+
     # ── Strategy: Polymarket Predictions ──
     pm_scan_interval_hours: int = 4
     pm_min_volume: float = 10_000
@@ -44,6 +49,7 @@ class Config:
 
     # ── Strategy: Cross-Exchange Spreads ──
     spread_min_pct: float = 0.15      # 0.15% min spread
+    spread_max_position: float = 10.0 # Max $10 per side
     spread_exchanges: list = field(default_factory=lambda: ["binance", "bybit", "okx"])
     spread_pairs: list = field(default_factory=lambda: [
         "BTC/USDT", "ETH/USDT", "SOL/USDT", "ARB/USDT",
@@ -72,6 +78,9 @@ class Config:
             hl_private_key=os.getenv("HYPERLIQUID_PRIVATE_KEY", ""),
             hl_wallet_address=os.getenv("HYPERLIQUID_WALLET_ADDRESS", ""),
             hl_bankroll=float(os.getenv("HL_BANKROLL", "20")),
+            binance_api_key=os.getenv("BINANCE_API_KEY", ""),
+            binance_secret=os.getenv("BINANCE_SECRET", ""),
+            binance_bankroll=float(os.getenv("BINANCE_BANKROLL", "20")),
         )
 
 cfg = Config.from_env()
