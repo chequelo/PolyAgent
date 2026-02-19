@@ -270,13 +270,12 @@ async def manage_positions(context: ContextTypes.DEFAULT_TYPE):
 
 
 async def cmd_positions(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Show currently open positions."""
+    """Show currently open positions with live monitoring data."""
     positions = get_open_positions()
     if not positions:
         await update.message.reply_text("📭 No open positions.")
         return
 
-    # Separate prediction positions from crypto positions
     pm_positions = [p for p in positions if p.strategy == "prediction"]
     other_positions = [p for p in positions if p.strategy != "prediction"]
 
@@ -288,14 +287,51 @@ async def cmd_positions(update: Update, context: ContextTypes.DEFAULT_TYPE):
             age = position_age_hours(pos.entry_time)
             question = pos.market_question or pos.symbol
             cat = pos.category or ""
-            lines.append(
-                f"{'🟢' if pos.side == 'YES' else '🔴'} "
-                f"*{pos.side}* {question[:60]}\n"
-                f"  ${pos.entry_price:.2f} × ${pos.size_usd:.2f}"
-                f"{f' | {cat}' if cat else ''} | {age:.1f}h ago"
-            )
+
+            side_emoji = '🟢' if pos.side == 'YES' else '🔴'
+            lines.append(f"{side_emoji} *{pos.side}* {question[:60]}")
+
+            # Price line: entry → last check (with delta)
+            price_line = f"  💵 Entry: ${pos.entry_price:.3f}"
+            if pos.last_check_price and pos.last_check_price != pos.entry_price:
+                delta = pos.last_check_price - pos.entry_price
+                price_line += f" → Now: ${pos.last_check_price:.3f} ({delta:+.3f})"
+            lines.append(price_line)
+
+            # Edge line: estimated prob vs current price
+            if pos.estimated_prob:
+                current = pos.last_check_price or pos.entry_price
+                if pos.side == "YES":
+                    edge = pos.estimated_prob - current
+                else:
+                    edge = (1 - pos.estimated_prob) - (1 - current)
+                edge_emoji = "🟢" if edge >= 0.03 else "🟡" if edge >= 0.01 else "🔴"
+                lines.append(
+                    f"  {edge_emoji} Prob: {pos.estimated_prob:.1%} | Edge: {edge:+.1%}"
+                )
+
+            # Meta line
+            meta = f"  💰 ${pos.size_usd:.2f}"
+            if cat:
+                meta += f" | {cat}"
+            meta += f" | {age:.1f}h"
+            if pos.token_id:
+                meta += " | 🔑"
+            if pos.last_reeval_time:
+                from datetime import datetime, timezone
+                try:
+                    reeval_ago = (datetime.now(timezone.utc) - datetime.fromisoformat(pos.last_reeval_time)).total_seconds() / 3600
+                    meta += f" | Re-eval {reeval_ago:.1f}h ago"
+                except Exception:
+                    pass
+            lines.append(meta)
+
+            if pos.original_thesis:
+                lines.append(f"  📝 _{pos.original_thesis[:80]}_")
+            lines.append("")
+
         total_pm = sum(p.size_usd for p in pm_positions)
-        lines.append(f"\n  Total PM exposure: *${total_pm:.2f}*\n")
+        lines.append(f"Total PM: *${total_pm:.2f}*\n")
 
     if other_positions:
         lines.append(f"*Crypto ({len(other_positions)}):*")
