@@ -38,6 +38,10 @@ class Config:
     pm_max_markets_per_scan: int = 20 # Analyze up to 20 markets per scan
     pm_max_category_exposure: float = 0.30  # Max 30% of bankroll in one category
 
+    # ── Strategy: PM Position Monitor (2-level re-evaluation) ──
+    pm_reeval_price_trigger: float = 0.05   # 5% price move → trigger re-eval (Level 2)
+    pm_reeval_min_edge: float = 0.01        # <1% edge after re-eval → auto-sell
+
     # ── Strategy: Polymarket YES+NO Arbitrage ──
     pm_arb_min_profit: float = 0.005  # Min $0.005 per $1 profit after fees
     pm_arb_fee: float = 0.02          # 2% Polymarket fee on winning side

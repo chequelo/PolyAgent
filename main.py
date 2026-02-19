@@ -78,6 +78,11 @@ async def full_scan(context: ContextTypes.DEFAULT_TYPE):
                 # Track position and update exposure
                 if result and result.get("success"):
                     bet_size = estimate["kelly_bet"]
+                    # Resolve token_id: YES = tokens[0], NO = tokens[1]
+                    tokens = market.get("tokens", [])
+                    token_id = None
+                    if len(tokens) >= 2:
+                        token_id = tokens[0] if estimate["side"] == "YES" else tokens[1]
                     create_prediction_position(
                         market_id=market["id"],
                         market_question=market["question"],
@@ -85,6 +90,9 @@ async def full_scan(context: ContextTypes.DEFAULT_TYPE):
                         side=estimate["side"],
                         entry_price=market["mid"],
                         size_usd=bet_size,
+                        token_id=token_id,
+                        estimated_prob=estimate["probability"],
+                        original_thesis=estimate.get("thesis", ""),
                     )
                     available_bankroll -= bet_size
                     category_exp[cat] = category_exp.get(cat, 0) + bet_size

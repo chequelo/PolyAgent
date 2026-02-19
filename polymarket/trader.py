@@ -127,6 +127,44 @@ async def execute_prediction_bet(market: dict, estimate: dict) -> dict:
         return {"success": False, "error": str(e)}
 
 
+async def sell_prediction_position(position, current_price: float) -> dict:
+    """Sell a prediction position on the CLOB at the current best bid."""
+    client = _get_client()
+    if not client:
+        return {"success": False, "error": "CLOB client not configured"}
+
+    token_id = position.token_id
+    if not token_id:
+        return {"success": False, "error": "No token_id on position"}
+
+    price = round(current_price, 2)
+    size = round(position.quantity, 2)
+
+    err = _validate_order(price, size)
+    if err:
+        return {"success": False, "error": err}
+
+    try:
+        from py_clob_client.clob_types import OrderArgs, OrderType
+        from py_clob_client.order_builder.constants import SELL
+
+        order = OrderArgs(
+            token_id=token_id,
+            price=price,
+            size=size,
+            side=SELL,
+        )
+        signed = client.create_order(order)
+        resp = client.post_order(signed, OrderType.GTC)
+
+        logger.info(f"Sell order placed: {position.symbol[:50]} @ ${price:.3f} x {size:.1f}")
+        return {"success": True, "response": str(resp), "price": price, "size": size}
+
+    except Exception as e:
+        logger.error(f"Sell order failed: {e}")
+        return {"success": False, "error": str(e)}
+
+
 async def execute_arb(opportunity: dict) -> dict:
     """Execute YES+NO arbitrage: buy both sides."""
     client = _get_client()

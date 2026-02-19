@@ -4,10 +4,13 @@ Hybrid approach:
 - Exchange-native TP/SL orders handle price-based exits instantly (24/7)
 - This polling checker handles data-based exits (rate flip, timeout, spread convergence)
   and detects when TP/SL already fired on the exchange
+- Prediction positions: 2-level monitor (free price check → paid re-eval only when needed)
 """
+import httpx
 import logging
+from datetime import datetime, timezone
 from config import cfg
-from positions import get_open_positions, close_position, position_age_hours
+from positions import get_open_positions, close_position, update_position, position_age_hours
 from crypto.executor import _get_client, cancel_hl_order, _symbol_to_coin
 
 logger = logging.getLogger("polyagent.position_manager")
@@ -35,8 +38,17 @@ async def check_positions(bot) -> list[dict]:
             from notifier import notify_position_closed
             await notify_position_closed(bot, pos, result)
 
+    # Prediction position monitoring (2-level: free price check → paid re-eval)
+    prediction_positions = get_open_positions(strategy="prediction")
+    for pos in prediction_positions:
+        result = await _check_prediction_position(pos)
+        if result:
+            actions.append(result)
+            from notifier import notify_prediction_reeval
+            await notify_prediction_reeval(bot, pos, result)
+
     if actions:
-        logger.info(f"Position manager: {len(actions)} positions closed")
+        logger.info(f"Position manager: {len(actions)} actions taken")
     return actions
 
 
@@ -376,3 +388,182 @@ async def _close_spread_position(buy_client, sell_client, pos, reason: str) -> d
             "reason": reason,
             "error": str(e),
         }
+
+
+# ═══════════════════════════════════════════════════
+# PREDICTION POSITION MONITORING (2-level)
+# ═══════════════════════════════════════════════════
+
+GAMMA_API = "https://gamma-api.polymarket.com"
+
+
+async def _fetch_gamma_price(market_id: str) -> dict | None:
+    """Fetch current price from Gamma API (free, no auth)."""
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.get(f"{GAMMA_API}/markets/{market_id}")
+            if resp.status_code != 200:
+                return None
+            data = resp.json()
+            best_bid = float(data.get("bestBid", 0) or 0)
+            best_ask = float(data.get("bestAsk", 1) or 1)
+            mid = (best_bid + best_ask) / 2 if best_ask > 0 else 0
+            return {"best_bid": best_bid, "best_ask": best_ask, "mid": mid}
+    except Exception as e:
+        logger.warning(f"Gamma price fetch failed for {market_id}: {e}")
+        return None
+
+
+async def _check_prediction_position(pos) -> dict | None:
+    """2-level prediction position monitor.
+
+    Level 1 (free): Fetch price via Gamma API, check if trigger thresholds hit.
+    Level 2 (paid): Re-research + re-estimate with Claude, decide HOLD/SELL.
+    """
+    if not pos.market_id:
+        return None
+
+    # ── Level 1: Free price check via Gamma ──
+    price_data = await _fetch_gamma_price(pos.market_id)
+    if not price_data:
+        return None
+
+    current_price = price_data["mid"]
+    best_bid = price_data["best_bid"]
+    ref_price = pos.last_check_price or pos.entry_price
+    estimated_prob = pos.estimated_prob
+
+    price_move = current_price - ref_price
+    price_move_pct = abs(price_move / ref_price) if ref_price > 0 else 0
+
+    # Check if edge inverted (price crossed our estimated probability)
+    edge_inverted = False
+    if estimated_prob is not None:
+        if pos.side == "YES" and current_price > estimated_prob:
+            edge_inverted = True
+        elif pos.side == "NO" and current_price < (1 - estimated_prob):
+            edge_inverted = True
+
+    trigger_level2 = (
+        price_move_pct >= cfg.pm_reeval_price_trigger
+        or edge_inverted
+    )
+
+    if not trigger_level2:
+        # No significant move — update last_check_price and skip
+        update_position(pos.id, last_check_price=current_price)
+        logger.debug(f"PM check {pos.id}: price ${current_price:.3f}, move {price_move_pct:.1%} — HOLD")
+        return None
+
+    logger.info(
+        f"PM check {pos.id}: price ${ref_price:.3f}→${current_price:.3f} "
+        f"(move {price_move_pct:.1%}, inverted={edge_inverted}) — triggering re-eval"
+    )
+
+    # ── Level 2: Re-research + re-estimate (costs ~$0.05) ──
+    try:
+        from polymarket.research import research_market
+        from polymarket.estimator import estimate_market
+
+        # Build a market dict compatible with research/estimator
+        market_for_eval = {
+            "id": pos.market_id,
+            "question": pos.market_question or pos.symbol,
+            "best_bid": price_data["best_bid"],
+            "best_ask": price_data["best_ask"],
+            "mid": current_price,
+            "volume": 0,
+            "liquidity": 0,
+            "spread": price_data["best_ask"] - price_data["best_bid"],
+            "category": pos.category or "",
+            "tokens": [],
+        }
+
+        research = await research_market(market_for_eval)
+        estimate = await estimate_market(market_for_eval, research)
+
+        if not estimate:
+            logger.warning(f"PM re-eval {pos.id}: estimator returned None")
+            update_position(
+                pos.id,
+                last_check_price=current_price,
+                last_reeval_time=datetime.now(timezone.utc).isoformat(),
+            )
+            return None
+
+        new_prob = estimate["probability"]
+        new_side = estimate["side"]
+        new_edge = estimate["abs_edge"]
+
+        # Compute current edge relative to our side
+        if pos.side == "YES":
+            our_edge = new_prob - current_price
+        else:  # NO
+            our_edge = (1 - new_prob) - (1 - current_price)
+
+        # Decision logic
+        if our_edge < cfg.pm_reeval_min_edge or (new_side != pos.side and new_side != "SKIP"):
+            # Edge disappeared or inverted → SELL
+            pnl = (current_price - pos.entry_price) * pos.quantity
+            if pos.side == "NO":
+                pnl = ((1 - current_price) - (1 - pos.entry_price)) * pos.quantity
+
+            reason = "edge_inverted" if our_edge < 0 else "edge_too_thin"
+
+            # Execute sell
+            from polymarket.trader import sell_prediction_position
+            sell_result = await sell_prediction_position(pos, best_bid)
+
+            if sell_result.get("success"):
+                close_position(pos.id, current_price, reason, pnl)
+                logger.info(f"PM auto-sell {pos.id}: {reason}, edge={our_edge:.1%}, PnL=${pnl:.2f}")
+            else:
+                logger.error(f"PM sell failed {pos.id}: {sell_result.get('error')}")
+
+            update_position(
+                pos.id,
+                last_check_price=current_price,
+                last_reeval_time=datetime.now(timezone.utc).isoformat(),
+            )
+
+            return {
+                "action": "SOLD",
+                "position_id": pos.id,
+                "current_price": current_price,
+                "new_probability": new_prob,
+                "new_edge": our_edge,
+                "pnl": pnl,
+                "reason": f"{reason}: edge was {our_edge:+.1%}, min required {cfg.pm_reeval_min_edge:.1%}",
+                "sell_success": sell_result.get("success", False),
+            }
+
+        elif our_edge < 0.03:
+            # Edge thin but still positive → ALERT (hold but warn)
+            update_position(
+                pos.id,
+                last_check_price=current_price,
+                last_reeval_time=datetime.now(timezone.utc).isoformat(),
+            )
+            return {
+                "action": "ALERT",
+                "position_id": pos.id,
+                "current_price": current_price,
+                "new_probability": new_prob,
+                "new_edge": our_edge,
+                "reason": f"Edge thinning: {our_edge:+.1%} (watching closely)",
+            }
+
+        else:
+            # Edge still healthy → HOLD
+            update_position(
+                pos.id,
+                last_check_price=current_price,
+                last_reeval_time=datetime.now(timezone.utc).isoformat(),
+            )
+            logger.info(f"PM re-eval {pos.id}: edge={our_edge:.1%} — HOLD")
+            return None  # No notification for healthy holds after re-eval
+
+    except Exception as e:
+        logger.error(f"PM re-eval failed {pos.id}: {e}")
+        update_position(pos.id, last_check_price=current_price)
+        return None

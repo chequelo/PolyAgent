@@ -136,6 +136,48 @@ async def notify_micro_arb(bot, opp: dict, result: dict):
     await send_message(bot, text)
 
 
+async def notify_prediction_reeval(bot, position, result: dict):
+    """Send notification when a prediction position is re-evaluated."""
+    action = result.get("action", "HOLD")
+    new_prob = result.get("new_probability")
+    new_edge = result.get("new_edge", 0)
+    current_price = result.get("current_price", 0)
+    pnl = result.get("pnl")
+
+    question = position.market_question or position.symbol
+
+    action_emoji = {"HOLD": "🟢", "SOLD": "🔴", "ALERT": "🟡"}.get(action, "⚪")
+
+    lines = [
+        f"🔄 *PM RE-EVALUATION — {action}*\n",
+        f"❓ {question[:100]}\n",
+        f"📍 Side: *{position.side}*",
+        f"💵 Entry: ${position.entry_price:.3f} → Now: ${current_price:.3f}",
+    ]
+
+    if position.estimated_prob and new_prob:
+        lines.append(
+            f"🎯 Prob: {position.estimated_prob:.1%} → {new_prob:.1%}"
+        )
+
+    if new_edge is not None:
+        lines.append(f"📈 Current edge: {new_edge:+.1%}")
+
+    if result.get("reason"):
+        lines.append(f"📝 _{result['reason']}_")
+
+    if action == "SOLD" and pnl is not None:
+        pnl_emoji = "🟢" if pnl >= 0 else "🔴"
+        lines.append(f"{pnl_emoji} PnL: *${pnl:+.2f}*")
+
+    from positions import position_age_hours
+    age = position_age_hours(position.entry_time)
+    lines.append(f"⏱ Position age: {age:.1f}h")
+    lines.append(f"\n{action_emoji} Action: *{action}*")
+
+    await send_message(bot, "\n".join(lines))
+
+
 async def notify_scan_summary(bot, stats: dict, diagnostics: dict | None = None):
     """Send periodic scan summary with diagnostics."""
     text = (

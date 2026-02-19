@@ -46,6 +46,11 @@ class Position:
     market_id: str | None = None
     market_question: str | None = None
     category: str | None = None
+    token_id: str | None = None              # CLOB token ID for sell orders
+    estimated_prob: float | None = None      # Our probability estimate at entry
+    original_thesis: str | None = None       # 1-line thesis from estimator
+    last_check_price: float | None = None    # Last Gamma price (Level 1)
+    last_reeval_time: str | None = None      # ISO timestamp of last Level 2 re-eval
     # Close info (filled on close)
     close_time: str | None = None
     close_price: float | None = None
@@ -89,6 +94,16 @@ def get_open_positions(strategy: str | None = None) -> list[Position]:
             continue
         result.append(Position(**p))
     return result
+
+
+def update_position(pos_id: str, **fields):
+    """Update arbitrary fields on a position."""
+    positions = _load()
+    for p in positions:
+        if p["id"] == pos_id:
+            p.update(fields)
+            break
+    _save(positions)
 
 
 def close_position(pos_id: str, close_price: float, reason: str, pnl: float | None = None):
@@ -194,6 +209,9 @@ def create_prediction_position(
     entry_price: float,
     size_usd: float,
     order_ids: list[str] | None = None,
+    token_id: str | None = None,
+    estimated_prob: float | None = None,
+    original_thesis: str | None = None,
 ) -> Position:
     """Create and save a Polymarket prediction position."""
     pos = Position(
@@ -210,6 +228,10 @@ def create_prediction_position(
         market_id=market_id,
         market_question=market_question,
         category=category or "Other",
+        token_id=token_id,
+        estimated_prob=estimated_prob,
+        original_thesis=original_thesis,
+        last_check_price=entry_price,
     )
     save_position(pos)
     return pos
