@@ -138,12 +138,16 @@ async def _fetch_active_crypto_markets(duration: str = "15M") -> list[dict]:
     return filtered
 
 
-async def scan_micro_arb() -> list[dict]:
-    """Full micro-arb scan: detect spot moves via candles + find mispriced PM markets."""
+async def scan_micro_arb(moves: dict[str, dict] | None = None) -> list[dict]:
+    """Full micro-arb scan: detect spot moves + find mispriced PM markets.
+
+    Args:
+        moves: Pre-detected spot moves (from WebSocket watcher). If None, detects via candles.
+    """
     opportunities = []
 
-    # Detect moves using candle data (no sleep needed)
-    moves = await _detect_spot_moves()
+    if moves is None:
+        moves = await _detect_spot_moves()
 
     if not moves:
         logger.debug("No significant spot moves detected")

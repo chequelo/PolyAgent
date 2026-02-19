@@ -270,16 +270,18 @@ async def manage_positions(context: ContextTypes.DEFAULT_TYPE):
 
 
 async def cmd_positions(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Show currently open positions with live monitoring data."""
+    """Show currently open positions with live monitoring data and totals."""
     positions = get_open_positions()
     if not positions:
         await update.message.reply_text("📭 No open positions.")
         return
 
     pm_positions = [p for p in positions if p.strategy == "prediction"]
-    other_positions = [p for p in positions if p.strategy != "prediction"]
+    crypto_positions = [p for p in positions if p.strategy != "prediction"]
 
     lines = [f"📊 *Open Positions ({len(positions)})*\n"]
+
+    total_deployed = 0.0
 
     if pm_positions:
         lines.append(f"*Polymarket ({len(pm_positions)}):*")
@@ -291,14 +293,12 @@ async def cmd_positions(update: Update, context: ContextTypes.DEFAULT_TYPE):
             side_emoji = '🟢' if pos.side == 'YES' else '🔴'
             lines.append(f"{side_emoji} *{pos.side}* {question[:60]}")
 
-            # Price line: entry → last check (with delta)
             price_line = f"  💵 Entry: ${pos.entry_price:.3f}"
             if pos.last_check_price and pos.last_check_price != pos.entry_price:
                 delta = pos.last_check_price - pos.entry_price
                 price_line += f" → Now: ${pos.last_check_price:.3f} ({delta:+.3f})"
             lines.append(price_line)
 
-            # Edge line: estimated prob vs current price
             if pos.estimated_prob:
                 current = pos.last_check_price or pos.entry_price
                 if pos.side == "YES":
@@ -310,7 +310,6 @@ async def cmd_positions(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     f"  {edge_emoji} Prob: {pos.estimated_prob:.1%} | Edge: {edge:+.1%}"
                 )
 
-            # Meta line
             meta = f"  💰 ${pos.size_usd:.2f}"
             if cat:
                 meta += f" | {cat}"
@@ -331,11 +330,12 @@ async def cmd_positions(update: Update, context: ContextTypes.DEFAULT_TYPE):
             lines.append("")
 
         total_pm = sum(p.size_usd for p in pm_positions)
-        lines.append(f"Total PM: *${total_pm:.2f}*\n")
+        total_deployed += total_pm
+        lines.append(f"  Subtotal PM: *${total_pm:.2f}* ({len(pm_positions)} pos)\n")
 
-    if other_positions:
-        lines.append(f"*Crypto ({len(other_positions)}):*")
-        for pos in other_positions:
+    if crypto_positions:
+        lines.append(f"*Crypto ({len(crypto_positions)}):*")
+        for pos in crypto_positions:
             age = position_age_hours(pos.entry_time)
             lines.append(
                 f"{'🔴' if pos.side == 'short' else '🟢'} "
@@ -346,6 +346,12 @@ async def cmd_positions(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if pos.entry_rate:
                 lines.append(f" | Rate: {pos.entry_rate * 100:.4f}%")
             lines.append("")
+
+        total_crypto = sum(p.size_usd for p in crypto_positions)
+        total_deployed += total_crypto
+        lines.append(f"  Subtotal Crypto: *${total_crypto:.2f}* ({len(crypto_positions)} pos)\n")
+
+    lines.append(f"💼 *Total deployed: ${total_deployed:.2f}* across {len(positions)} positions")
 
     await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
 
@@ -481,12 +487,34 @@ async def cmd_balancetest(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # MAIN
 # ═══════════════════════════════════════════════════
 
+async def post_init(app: Application):
+    """Start real-time WebSocket watchers after bot initializes."""
+    from watcher import Watcher
+    watcher = Watcher(app.bot)
+    app.bot_data["watcher"] = watcher
+    await watcher.start()
+    logger.info("Real-time watchers started (PM + Spread + MicroArb + Funding)")
+
+
+async def post_shutdown(app: Application):
+    """Stop watchers on shutdown."""
+    watcher = app.bot_data.get("watcher")
+    if watcher:
+        await watcher.stop()
+
+
 def main():
     if not cfg.telegram_token:
         logger.error("TELEGRAM_BOT_TOKEN not set. Exiting.")
         return
 
-    app = Application.builder().token(cfg.telegram_token).build()
+    app = (
+        Application.builder()
+        .token(cfg.telegram_token)
+        .post_init(post_init)
+        .post_shutdown(post_shutdown)
+        .build()
+    )
 
     # Commands
     app.add_handler(CommandHandler("start", cmd_start))
@@ -498,37 +526,37 @@ def main():
     app.add_handler(CommandHandler("balancetest", cmd_balancetest))
     app.add_handler(CommandHandler("positions", cmd_positions))
 
-    # Scheduled jobs
+    # Scheduled jobs (fallback — watchers handle real-time monitoring)
     jq = app.job_queue
 
     # Full scan every N hours (predictions + arbs + crypto)
     jq.run_repeating(
         full_scan,
         interval=cfg.pm_scan_interval_hours * 3600,
-        first=30,  # Start 30s after boot
+        first=30,
         name="full_scan",
     )
 
-    # Quick crypto scan every N minutes
+    # Quick crypto scan — less frequent now that watchers handle real-time
     jq.run_repeating(
         crypto_scan,
         interval=cfg.fr_scan_interval_min * 60,
-        first=120,  # Start 2min after boot
+        first=120,
         name="crypto_scan",
     )
 
-    # Position manager — check exits every N minutes
+    # Position manager — fallback checker (watchers handle real-time exits)
     jq.run_repeating(
         manage_positions,
-        interval=cfg.pos_check_interval_min * 60,
-        first=180,  # Start 3min after boot
+        interval=30 * 60,  # Every 30min (fallback, watchers handle real-time)
+        first=180,
         name="position_manager",
     )
 
     logger.info("🤖 PolyAgent v2 starting...")
     logger.info(f"   PM scan: every {cfg.pm_scan_interval_hours}h")
     logger.info(f"   Crypto scan: every {cfg.fr_scan_interval_min}min")
-    logger.info(f"   Position check: every {cfg.pos_check_interval_min}min")
+    logger.info(f"   Position fallback: every 30min (real-time via WebSocket)")
     logger.info(f"   Strategies: Predictions + PM Arb + Funding Rate + Spreads")
 
     app.run_polling(drop_pending_updates=True)

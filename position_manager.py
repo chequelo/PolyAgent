@@ -415,42 +415,26 @@ async def _fetch_gamma_price(market_id: str) -> dict | None:
 
 
 async def _check_prediction_position(pos) -> dict | None:
-    """2-level prediction position monitor.
-
-    Level 1 (free): Fetch price via Gamma API, check if trigger thresholds hit.
-    Level 2 (paid): Re-research + re-estimate with Claude, decide HOLD/SELL.
-    """
+    """Level 1: Free price check via Gamma, triggers Level 2 if thresholds hit."""
     if not pos.market_id:
         return None
 
-    # ── Level 1: Free price check via Gamma ──
     price_data = await _fetch_gamma_price(pos.market_id)
     if not price_data:
         return None
 
     current_price = price_data["mid"]
-    best_bid = price_data["best_bid"]
     ref_price = pos.last_check_price or pos.entry_price
-    estimated_prob = pos.estimated_prob
+    price_move_pct = abs(current_price - ref_price) / ref_price if ref_price > 0 else 0
 
-    price_move = current_price - ref_price
-    price_move_pct = abs(price_move / ref_price) if ref_price > 0 else 0
-
-    # Check if edge inverted (price crossed our estimated probability)
     edge_inverted = False
-    if estimated_prob is not None:
-        if pos.side == "YES" and current_price > estimated_prob:
+    if pos.estimated_prob is not None:
+        if pos.side == "YES" and current_price > pos.estimated_prob:
             edge_inverted = True
-        elif pos.side == "NO" and current_price < (1 - estimated_prob):
+        elif pos.side == "NO" and current_price < (1 - pos.estimated_prob):
             edge_inverted = True
 
-    trigger_level2 = (
-        price_move_pct >= cfg.pm_reeval_price_trigger
-        or edge_inverted
-    )
-
-    if not trigger_level2:
-        # No significant move — update last_check_price and skip
+    if price_move_pct < cfg.pm_reeval_price_trigger and not edge_inverted:
         update_position(pos.id, last_check_price=current_price)
         logger.debug(f"PM check {pos.id}: price ${current_price:.3f}, move {price_move_pct:.1%} — HOLD")
         return None
@@ -459,13 +443,22 @@ async def _check_prediction_position(pos) -> dict | None:
         f"PM check {pos.id}: price ${ref_price:.3f}→${current_price:.3f} "
         f"(move {price_move_pct:.1%}, inverted={edge_inverted}) — triggering re-eval"
     )
+    return await _reeval_prediction(pos, price_data)
 
-    # ── Level 2: Re-research + re-estimate (costs ~$0.05) ──
+
+async def _reeval_prediction(pos, price_data: dict) -> dict | None:
+    """Level 2: Re-research + re-estimate with Claude, decide HOLD/ALERT/SELL.
+
+    Called by both the polling fallback (_check_prediction_position) and
+    the real-time watcher (watcher.py).
+    """
+    current_price = price_data["mid"]
+    best_bid = price_data["best_bid"]
+
     try:
         from polymarket.research import research_market
         from polymarket.estimator import estimate_market
 
-        # Build a market dict compatible with research/estimator
         market_for_eval = {
             "id": pos.market_id,
             "question": pos.market_question or pos.symbol,
@@ -493,24 +486,20 @@ async def _check_prediction_position(pos) -> dict | None:
 
         new_prob = estimate["probability"]
         new_side = estimate["side"]
-        new_edge = estimate["abs_edge"]
 
-        # Compute current edge relative to our side
         if pos.side == "YES":
             our_edge = new_prob - current_price
-        else:  # NO
+        else:
             our_edge = (1 - new_prob) - (1 - current_price)
 
         # Decision logic
         if our_edge < cfg.pm_reeval_min_edge or (new_side != pos.side and new_side != "SKIP"):
-            # Edge disappeared or inverted → SELL
             pnl = (current_price - pos.entry_price) * pos.quantity
             if pos.side == "NO":
                 pnl = ((1 - current_price) - (1 - pos.entry_price)) * pos.quantity
 
             reason = "edge_inverted" if our_edge < 0 else "edge_too_thin"
 
-            # Execute sell
             from polymarket.trader import sell_prediction_position
             sell_result = await sell_prediction_position(pos, best_bid)
 
@@ -525,7 +514,6 @@ async def _check_prediction_position(pos) -> dict | None:
                 last_check_price=current_price,
                 last_reeval_time=datetime.now(timezone.utc).isoformat(),
             )
-
             return {
                 "action": "SOLD",
                 "position_id": pos.id,
@@ -538,7 +526,6 @@ async def _check_prediction_position(pos) -> dict | None:
             }
 
         elif our_edge < 0.03:
-            # Edge thin but still positive → ALERT (hold but warn)
             update_position(
                 pos.id,
                 last_check_price=current_price,
@@ -554,14 +541,13 @@ async def _check_prediction_position(pos) -> dict | None:
             }
 
         else:
-            # Edge still healthy → HOLD
             update_position(
                 pos.id,
                 last_check_price=current_price,
                 last_reeval_time=datetime.now(timezone.utc).isoformat(),
             )
             logger.info(f"PM re-eval {pos.id}: edge={our_edge:.1%} — HOLD")
-            return None  # No notification for healthy holds after re-eval
+            return None
 
     except Exception as e:
         logger.error(f"PM re-eval failed {pos.id}: {e}")
