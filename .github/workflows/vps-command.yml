@@ -1,0 +1,25 @@
+name: VPS Command
+
+on:
+  workflow_dispatch:
+    inputs:
+      command:
+        description: "Command to run on VPS (in ~/app)"
+        required: true
+        default: "docker compose ps"
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Execute via SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: polyagent
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            cd ~/app
+            echo "Running: ${{ github.event.inputs.command }}"
+            ${{ github.event.inputs.command }}
+            echo "✅ Done at $(date)"
