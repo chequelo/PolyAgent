@@ -23,6 +23,8 @@ jobs:
             sed -i '/^POLY_PROXY_URL/d' .env 2>/dev/null
             sed -i '/^BINANCE_API_KEY/d' .env 2>/dev/null
             sed -i '/^BINANCE_SECRET/d' .env 2>/dev/null
+            sed -i '/^HYPERLIQUID_PRIVATE_KEY/d' .env 2>/dev/null
+            sed -i '/^HYPERLIQUID_WALLET_ADDRESS/d' .env 2>/dev/null
 
             # Ensure file ends with newline before appending
             [ -s .env ] && [ "$(tail -c 1 .env)" != "" ] && echo >> .env
@@ -31,13 +33,30 @@ jobs:
             printf 'POLY_PROXY_URL=%s\n' '${{ secrets.POLY_PROXY_URL }}' >> .env
             printf 'BINANCE_API_KEY=%s\n' '${{ secrets.BINANCE_API_KEY }}' >> .env
             printf 'BINANCE_SECRET=%s\n' '${{ secrets.BINANCE_SECRET }}' >> .env
+            printf 'HYPERLIQUID_PRIVATE_KEY=%s\n' '${{ secrets.HYPERLIQUID_PRIVATE_KEY }}' >> .env
+            printf 'HYPERLIQUID_WALLET_ADDRESS=%s\n' '${{ secrets.HYPERLIQUID_WALLET_ADDRESS }}' >> .env
 
-            # Debug: verify key env vars exist (values masked)
+            # Debug: verify env vars have values (not just keys)
             echo "=== .env check ==="
-            grep -c 'POLYMARKET_PRIVATE_KEY' .env && echo "PM key: OK" || echo "PM key: MISSING"
-            grep -c 'HYPERLIQUID_PRIVATE_KEY' .env && echo "HL key: OK" || echo "HL key: MISSING"
-            grep -c 'BINANCE_API_KEY' .env && echo "BN key: OK" || echo "BN key: MISSING"
-            grep -c 'POLY_PROXY_URL' .env && echo "Proxy: OK" || echo "Proxy: MISSING"
+            _check_key() {
+              local val=$(grep "^$1=" .env | head -1 | cut -d= -f2-)
+              local len=${#val}
+              if [ "$len" -gt 0 ]; then
+                echo "$2: ✅ (${len} chars)"
+              else
+                echo "$2: ❌ EMPTY — add $1 to GitHub Secrets"
+              fi
+            }
+            _check_key POLYMARKET_PRIVATE_KEY "PM key"
+            _check_key POLYMARKET_FUNDER_ADDRESS "PM funder"
+            _check_key HYPERLIQUID_PRIVATE_KEY "HL key"
+            _check_key HYPERLIQUID_WALLET_ADDRESS "HL wallet"
+            _check_key BINANCE_API_KEY "BN key"
+            _check_key BINANCE_SECRET "BN secret"
+            _check_key ANTHROPIC_API_KEY "Claude"
+            _check_key TAVILY_API_KEY "Tavily"
+            _check_key TELEGRAM_BOT_TOKEN "TG token"
+            _check_key POLY_PROXY_URL "Proxy"
             echo "Total lines: $(wc -l < .env)"
 
             docker compose build --quiet
