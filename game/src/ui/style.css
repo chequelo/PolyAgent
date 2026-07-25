@@ -1,0 +1,94 @@
+:root{
+  --accent:#c0392b;
+  --hud:#e8ede8;
+  --hud-dim:rgba(232,237,232,0.55);
+  --font:'Rajdhani','Oswald','Segoe UI',system-ui,sans-serif;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:#000;overflow:hidden;font-family:var(--font);cursor:default;-webkit-user-select:none;user-select:none}
+#app{position:fixed;inset:0}
+canvas#scene{position:absolute;inset:0;width:100%;height:100%;display:block}
+.hidden{display:none !important}
+
+/* ---------------- Scope ---------------- */
+#scope{position:absolute;inset:0;z-index:20;pointer-events:none}
+.scope-vignette{
+  position:absolute;inset:0;
+  background:radial-gradient(circle at 50% 50%,
+     rgba(0,0,0,0) 0%,
+     rgba(0,0,0,0) 30.5%,
+     rgba(0,0,0,0.30) 33%,
+     rgba(0,0,0,0.98) 35.2%,
+     #000 36%);
+}
+.scope-reticle{position:absolute;top:50%;left:50%;width:min(100vh,100vw);height:min(100vh,100vw);transform:translate(-50%,-50%)}
+.scope-ring{
+  position:absolute;top:50%;left:50%;width:min(100vh,100vw);height:min(100vh,100vw);
+  transform:translate(-50%,-50%);border-radius:50%;
+  box-shadow:inset 0 0 22px 6px rgba(0,0,0,0.8), inset 0 0 120px 30px rgba(10,15,20,0.35), 0 0 0 2px rgba(180,190,200,0.06);
+}
+.scope-info{
+  position:absolute;top:50%;left:50%;transform:translate(-50%, 30vh);
+  display:flex;gap:26px;color:rgba(210,220,215,0.75);font-size:15px;letter-spacing:3px;font-weight:600;
+  text-shadow:0 1px 3px #000;
+}
+.scope-info #scopeWind{color:var(--accent)}
+
+/* ---------------- HUD ---------------- */
+#hud{position:absolute;inset:0;z-index:10;pointer-events:none;color:var(--hud)}
+.crosshair{position:absolute;top:50%;left:50%;width:26px;height:26px;transform:translate(-50%,-50%);transition:opacity .12s}
+.crosshair .ch{position:absolute;background:rgba(232,237,232,0.9);box-shadow:0 0 2px rgba(0,0,0,0.9)}
+.ch-t,.ch-b{left:50%;width:2px;height:7px;margin-left:-1px}
+.ch-l,.ch-r{top:50%;height:2px;width:7px;margin-top:-1px}
+.ch-t{top:0}.ch-b{bottom:0}.ch-l{left:0}.ch-r{right:0}
+
+.hitmarker{position:absolute;top:50%;left:50%;width:34px;height:34px;transform:translate(-50%,-50%) rotate(45deg);opacity:0}
+.hitmarker::before,.hitmarker::after{content:'';position:absolute;background:#fff;box-shadow:0 0 4px #000}
+.hitmarker::before{left:50%;top:0;width:2px;height:10px;margin-left:-1px;box-shadow:0 0 4px #000, 0 24px 0 #fff}
+.hitmarker::after{top:50%;left:0;height:2px;width:10px;margin-top:-1px;box-shadow:0 0 4px #000, 24px 0 0 #fff}
+.hitmarker.kill::before,.hitmarker.kill::after{background:var(--accent)}
+.hitmarker.show{animation:hm .28s ease-out}
+@keyframes hm{0%{opacity:1;transform:translate(-50%,-50%) rotate(45deg) scale(1.6)}100%{opacity:0;transform:translate(-50%,-50%) rotate(45deg) scale(1)}}
+
+.damage-vignette{position:absolute;inset:0;opacity:0;background:radial-gradient(circle at 50% 60%,rgba(0,0,0,0) 40%,rgba(140,20,15,0.6) 100%);transition:opacity .1s}
+
+.hud-bottom-left{position:absolute;left:34px;bottom:30px;display:flex;flex-direction:column;gap:12px}
+.stat-label{font-size:12px;letter-spacing:3px;color:var(--hud-dim);margin-bottom:4px;font-weight:600}
+.bar{width:230px;height:8px;background:rgba(0,0,0,0.45);border:1px solid rgba(255,255,255,0.12);position:relative;transform:skewX(-18deg)}
+.bar-fill{position:absolute;inset:0;transform-origin:left;transition:width .18s}
+.bar-fill.health{background:linear-gradient(90deg,#8e2a22,#e04a3a);width:100%}
+.bar-fill.stamina{background:linear-gradient(90deg,#3a6ea5,#66c2ff);width:100%}
+
+.hud-bottom-right{position:absolute;right:36px;bottom:26px;text-align:right;text-shadow:0 2px 6px #000}
+.ammo{font-size:52px;font-weight:700;line-height:1;letter-spacing:1px}
+.ammo #ammoMag{color:#fff}
+.ammo .ammo-sep,.ammo #ammoReserve{color:var(--hud-dim);font-size:30px}
+.weapon-name{font-size:13px;letter-spacing:4px;color:var(--hud-dim);margin-top:6px;font-weight:600}
+
+.hud-top-left{position:absolute;left:34px;top:28px;text-shadow:0 2px 6px #000}
+.objective{font-size:15px;letter-spacing:3px;color:var(--accent);font-weight:600}
+.score{font-size:13px;letter-spacing:3px;color:var(--hud-dim);margin-top:6px}
+.score #score{color:#fff;font-size:18px}
+
+.killfeed{position:absolute;right:34px;top:28px;display:flex;flex-direction:column;gap:6px;align-items:flex-end}
+.kf-item{background:rgba(0,0,0,0.4);border-right:3px solid var(--accent);padding:5px 12px;font-size:13px;letter-spacing:2px;animation:kf .3s ease-out;text-shadow:0 1px 3px #000}
+@keyframes kf{from{opacity:0;transform:translateX(30px)}to{opacity:1;transform:none}}
+
+.breath{position:absolute;left:50%;bottom:24%;transform:translateX(-50%);font-size:13px;letter-spacing:3px;color:var(--hud-dim)}
+.breath b{color:#fff}
+
+/* ---------------- Menu ---------------- */
+.menu{position:absolute;inset:0;z-index:40;display:flex;align-items:center;justify-content:center;
+  background:radial-gradient(circle at 50% 40%,rgba(20,26,30,0.55),rgba(0,0,0,0.86));backdrop-filter:blur(3px)}
+.menu-inner{text-align:center;color:#e8ede8}
+.menu h1{font-size:72px;font-weight:700;letter-spacing:8px;margin:0;text-shadow:0 6px 30px rgba(0,0,0,0.8)}
+.menu h1 span{color:var(--accent)}
+.menu .tag{color:var(--hud-dim);letter-spacing:4px;margin:10px 0 34px;font-size:14px}
+#startBtn{background:var(--accent);color:#fff;border:none;padding:16px 60px;font-family:var(--font);font-size:22px;font-weight:700;letter-spacing:5px;cursor:pointer;transform:skewX(-10deg);box-shadow:0 8px 30px rgba(192,57,43,0.4);transition:.15s}
+#startBtn:hover{background:#d84534;transform:skewX(-10deg) translateY(-2px);box-shadow:0 12px 40px rgba(192,57,43,0.55)}
+.controls{display:grid;grid-template-columns:repeat(4,1fr);gap:12px 26px;margin-top:44px;color:var(--hud-dim);font-size:13px;letter-spacing:2px}
+.controls kbd{display:inline-block;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.16);border-radius:3px;padding:2px 8px;color:#fff;margin-right:6px;font-family:var(--font)}
+
+.loading{position:absolute;inset:0;z-index:50;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;background:#05070a;color:var(--hud-dim);letter-spacing:5px;font-size:14px}
+.loading-bar{width:280px;height:3px;background:rgba(255,255,255,0.1)}
+#loadingFill{height:100%;width:0;background:var(--accent);transition:width .2s}
