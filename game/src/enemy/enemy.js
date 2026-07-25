@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { Textures } from '../world/textures.js';
 
 /*
  * Enemy soldiers built from primitives with PBR materials.
@@ -6,20 +7,28 @@ import * as THREE from 'three';
  * (idle sway, aim, stagger, death fall) without an external rig.
  */
 
-const CAMO = 0x5a5c42;      // olive drab
-const CAMO_DARK = 0x3f4230;
-const SKIN = 0x9c6b4a;
-const GEAR = 0x2b2b26;
-const HELMET = 0x4a4c3a;
+const CAMO = 0x474a30;      // darker olive drab
+const CAMO_DARK = 0x30331d;
+const SKIN = 0x7f5638;
+const GEAR = 0x22221d;
+const HELMET = 0x363829;
 
 function mat(color, rough = 0.85, metal = 0.0) {
   return new THREE.MeshStandardMaterial({ color, roughness: rough, metalness: metal });
 }
 
+function clothMat(color) {
+  const t = Textures.sandbag(); // reuse woven-cloth normal
+  return new THREE.MeshStandardMaterial({
+    color, roughness: 0.92, metalness: 0,
+    normalMap: t.normalMap, normalScale: new THREE.Vector2(0.35, 0.35),
+  });
+}
+
 function makeSoldier() {
   const g = new THREE.Group();
-  const camo = mat(CAMO, 0.9);
-  const camoD = mat(CAMO_DARK, 0.9);
+  const camo = clothMat(CAMO);
+  const camoD = clothMat(CAMO_DARK);
   const skin = mat(SKIN, 0.7);
   const gear = mat(GEAR, 0.6, 0.1);
   const helmetMat = mat(HELMET, 0.55, 0.15);

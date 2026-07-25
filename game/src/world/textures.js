@@ -107,10 +107,19 @@ function generateSurface(spec) {
         const crack = Math.pow(ridge, spec.crackSharp || 8) * (spec.cracks);
         h -= crack;
       }
+      // vertical weathering streaks (rain/dirt running down)
+      let streakDark = 0;
+      if (spec.streak) {
+        const sN = fbm(u * spec.streakFreq || u * 3, v * 0.25, seed + 300, 4);
+        const runs = Math.pow(THREE.MathUtils.clamp(sN, 0, 1), 3);
+        streakDark = runs * spec.streak * (0.4 + 0.6 * (v / scale)); // stronger lower down
+        h -= streakDark * 0.5;
+      }
       h = THREE.MathUtils.clamp(h, 0, 1);
       height[y * size + x] = h;
 
       const col = lerpColor(spec.base, spec.base2, THREE.MathUtils.clamp(n + g, 0, 1));
+      if (streakDark > 0) { col[0] *= (1 - streakDark * 0.55); col[1] *= (1 - streakDark * 0.5); col[2] *= (1 - streakDark * 0.45); }
       // patchy dirt splotches
       if (spec.splotch) {
         const s = fbm(u * 0.5 + 40, v * 0.5 + 40, seed + 7, 3);
@@ -158,10 +167,12 @@ export const Textures = {
   },
   concrete() {
     return this.get('concrete', {
-      size: 512, seed: 31, scale: 4, octaves: 5,
-      base: [122, 120, 116], base2: [168, 166, 160],
-      rough: [0.6, 0.85], normalStrength: 2.4, repeat: 3,
-      cracks: 0.55, crackSharp: 10, splotch: 0.3, splotchColor: [86, 82, 78], grain: 0.05,
+      size: 1024, seed: 31, scale: 10, octaves: 6,
+      base: [116, 112, 104], base2: [158, 154, 146],
+      rough: [0.72, 0.92], normalStrength: 0.9, repeat: 2,
+      cracks: 0.32, crackSharp: 26,           // thin hairline cracks, not cells
+      streak: 0.55, streakFreq: 7,            // vertical rain/dirt weathering
+      splotch: 0.42, splotchColor: [92, 86, 78], grain: 0.045,
     });
   },
   rock() {

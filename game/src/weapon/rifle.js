@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { Textures } from '../world/textures.js';
 
 /*
  * First-person .50 sniper rifle viewmodel.
@@ -36,10 +37,18 @@ export class Rifle {
 
   _build() {
     const gun = new THREE.Group();
-    const gunmetal = mat(0x17181d, 0.5, 0.65);
-    const gunmetalWorn = mat(0x2a2c32, 0.62, 0.55);
-    const polymer = mat(0x1a1c1a, 0.7, 0.05);
-    const black = mat(0x101012, 0.55, 0.3);
+    const mtex = Textures.metal();
+    const gunmetal = new THREE.MeshStandardMaterial({
+      color: 0x15161b, roughness: 0.5, metalness: 0.7,
+      normalMap: mtex.normalMap, roughnessMap: mtex.roughnessMap,
+      normalScale: new THREE.Vector2(0.4, 0.4), envMapIntensity: 1.25,
+    });
+    const gunmetalWorn = new THREE.MeshStandardMaterial({
+      color: 0x2a2c32, roughness: 0.62, metalness: 0.6,
+      normalMap: mtex.normalMap, normalScale: new THREE.Vector2(0.5, 0.5), envMapIntensity: 1.1,
+    });
+    const polymer = mat(0x1a1c1a, 0.72, 0.05);
+    const black = mat(0x0e0f11, 0.55, 0.3);
 
     // receiver
     const receiver = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.09, 0.5), gunmetal);

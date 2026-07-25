@@ -1,0 +1,11 @@
+import { chromium } from 'playwright';
+const b = await chromium.launch({ executablePath:'/opt/pw-browsers/chromium', args:['--use-gl=angle','--use-angle=swiftshader','--enable-unsafe-swiftshader','--ignore-gpu-blocklist','--no-sandbox','--disable-dev-shm-usage']});
+const p = await b.newPage({viewport:{width:640,height:360}});
+p.on('console', m=>console.log('['+m.type()+']', m.text().slice(0,400)));
+p.on('pageerror', e=>console.log('[PAGEERR]', e.message.slice(0,400)));
+await p.goto('http://localhost:5173/capture.html?enemies=0&cam=-11,3,-3&look=-20,4.5,-21&fov=46',{waitUntil:'commit',timeout:30000});
+await p.waitForFunction(()=>window.__ready===true,{timeout:90000}).catch(()=>console.log('READY_TIMEOUT'));
+await p.waitForTimeout(300);
+const info = await p.evaluate(()=>{const c=document.getElementById('scene');const g=c.getContext('webgl2');return {w:c.width,h:c.height,glLost:g?g.isContextLost():'noctx'};});
+console.log('CANVAS', JSON.stringify(info));
+await b.close();

@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
 import { Textures } from './textures.js';
 
 // ---- shared FBM (matches textures.js so terrain + placement agree) ----
@@ -70,20 +71,20 @@ export class Level {
   }
 
   _terrain() {
-    const S = 400, seg = 220;
+    const S = 400, seg = 320;
     const geo = new THREE.PlaneGeometry(S, S, seg, seg);
     geo.rotateX(-Math.PI / 2);
     const pos = geo.attributes.position;
     const colors = [];
-    const lo = new THREE.Color(0x8a7350), hi = new THREE.Color(0xcbb488), dark = new THREE.Color(0x5f4e35);
+    const lo = new THREE.Color(0x93794f), hi = new THREE.Color(0xc4ac81), dark = new THREE.Color(0x6f5c3e);
     for (let i = 0; i < pos.count; i++) {
       const x = pos.getX(i), z = pos.getZ(i);
       const h = terrainHeight(x, z);
       pos.setY(i, h);
-      // vertex tint: darker in hollows, lighter on crests, patchy
-      const t = THREE.MathUtils.clamp((h + 4) / 12, 0, 1);
-      const patch = fbm2(x * 0.05, z * 0.05, 3, 3);
-      const c = lo.clone().lerp(hi, t).lerp(dark, patch * 0.4);
+      // low-contrast macro tint (softer so triangle interpolation doesn't show as seams)
+      const t = THREE.MathUtils.clamp((h + 4) / 14, 0, 1);
+      const patch = fbm2(x * 0.03, z * 0.03, 3, 4);
+      const c = lo.clone().lerp(hi, t * 0.7 + 0.15).lerp(dark, patch * 0.22);
       colors.push(c.r, c.g, c.b);
     }
     geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
@@ -93,7 +94,7 @@ export class Level {
     const mat = new THREE.MeshStandardMaterial({
       map: t.map, normalMap: t.normalMap, roughnessMap: t.roughnessMap,
       roughness: 1, metalness: 0, vertexColors: true,
-      normalScale: new THREE.Vector2(1.2, 1.2),
+      normalScale: new THREE.Vector2(1.8, 1.8),
     });
     const mesh = new THREE.Mesh(geo, mat);
     mesh.receiveShadow = true;
@@ -104,12 +105,17 @@ export class Level {
 
   _concreteMat() {
     const t = Textures.concrete();
-    return new THREE.MeshStandardMaterial({ map: t.map, normalMap: t.normalMap, roughnessMap: t.roughnessMap, roughness: 1, metalness: 0, color: 0xb9b3a8 });
+    return new THREE.MeshStandardMaterial({
+      map: t.map, normalMap: t.normalMap, roughnessMap: t.roughnessMap,
+      roughness: 1, metalness: 0, color: 0xb2aca1,
+      normalScale: new THREE.Vector2(0.55, 0.55),
+    });
   }
 
   // A ruined concrete building: walls with window/door gaps, partially collapsed.
   _wall(x, y, z, w, h, d, mat, rotY = 0) {
-    const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+    const r = Math.min(0.08, Math.min(w, h, d) * 0.4);
+    const m = new THREE.Mesh(new RoundedBoxGeometry(w, h, d, 3, r), mat);
     m.position.set(x, y, z); m.rotation.y = rotY;
     m.castShadow = true; m.receiveShadow = true;
     this.scene.add(m);
@@ -222,11 +228,11 @@ export class Level {
 
   _crates(x, z) {
     const wood = Textures.wood();
-    const mat = new THREE.MeshStandardMaterial({ map: wood.map, normalMap: wood.normalMap, roughnessMap: wood.roughnessMap, roughness: 0.9, color: 0x9c7b4a });
+    const mat = new THREE.MeshStandardMaterial({ map: wood.map, normalMap: wood.normalMap, roughnessMap: wood.roughnessMap, roughness: 0.9, color: 0x8a7346 });
     const stack = [[0, 0, 0], [1.05, 0, 0.2], [0.5, 1.02, 0.1], [-0.1, 0, 1.0]];
     for (const [dx, dy, dz] of stack) {
       const s = 0.95;
-      const m = new THREE.Mesh(new THREE.BoxGeometry(s, s, s), mat);
+      const m = new THREE.Mesh(new RoundedBoxGeometry(s, s, s, 2, 0.04), mat);
       const px = x + dx, pz = z + dz;
       m.position.set(px, terrainHeight(px, pz) + s / 2 + dy, pz);
       m.rotation.y = (dx + dz) * 0.4;
@@ -311,7 +317,7 @@ export class Level {
 
     const tex = this._grassTexture();
     const mat = new THREE.MeshStandardMaterial({
-      map: tex, alphaTest: 0.35, side: THREE.DoubleSide, roughness: 1, metalness: 0,
+      map: tex, alphaTest: 0.5, side: THREE.DoubleSide, roughness: 1, metalness: 0,
       vertexColors: true, color: 0xffffff, envMapIntensity: 0.3,
     });
     const N = 3200;

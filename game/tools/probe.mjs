@@ -1,0 +1,21 @@
+import { chromium } from 'playwright';
+const b = await chromium.launch({ executablePath:'/opt/pw-browsers/chromium', args:['--use-gl=angle','--use-angle=swiftshader','--enable-unsafe-swiftshader','--ignore-gpu-blocklist','--no-sandbox','--disable-dev-shm-usage']});
+const p = await b.newPage({viewport:{width:400,height:240}});
+p.on('pageerror', e=>console.log('[PAGEERR]', e.message.slice(0,300)));
+await p.goto('http://localhost:5173/capture.html?enemies=0&raw=1&cam=0,3,20&look=0,1,-10',{waitUntil:'commit',timeout:30000});
+await p.waitForFunction(()=>window.__ready===true,{timeout:90000}).catch(()=>console.log('TIMEOUT'));
+const r = await p.evaluate(()=>{
+  const T=window.__THREE, s=window.__scene, cam=window.__cam, R=window.__R;
+  const fwd=new T.Vector3(0,0,-1).applyQuaternion(cam.quaternion);
+  const std=new T.Mesh(new T.BoxGeometry(1,1,1), new T.MeshStandardMaterial({color:0x00ff00,roughness:0.8}));
+  std.position.copy(cam.position).addScaledVector(fwd,4); s.add(std);
+  s.add(new T.AmbientLight(0xffffff,1.5));
+  const c=document.getElementById('scene');const cv=document.createElement('canvas');cv.width=c.width;cv.height=c.height;const ctx=cv.getContext('2d');
+  const px=(x,y)=>{ctx.drawImage(c,0,0);const d=ctx.getImageData(x,y,1,1).data;return [d[0],d[1],d[2]];};
+  R.renderer.render(s,cam); const withEnv=px(200,120);
+  const envType = s.environment && s.environment.constructor.name;
+  s.environment=null; R.renderer.render(s,cam); const noEnv=px(200,120);
+  return { withEnv, noEnv, envType };
+});
+console.log('RESULT', JSON.stringify(r));
+await b.close();

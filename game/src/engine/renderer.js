@@ -20,8 +20,8 @@ const GradeShader = {
     tDiffuse: { value: null },
     uTime: { value: 0 },
     uVignette: { value: 0.9 },
-    uAberration: { value: 0.0014 },
-    uGrain: { value: 0.018 },
+    uAberration: { value: 0.006 },   // multiplied by r2*r2 -> ~0.0015 at extreme corners only
+    uGrain: { value: 0.016 },
     uSat: { value: 1.09 },
     uContrast: { value: 1.07 },
     uLift: { value: new THREE.Vector3(0.01, 0.006, 0.0) },
@@ -42,7 +42,7 @@ const GradeShader = {
       vec2 c = uv - 0.5;
       float r2 = dot(c,c);
       // chromatic aberration — offset R/B radially, strengthening to edges
-      vec2 dir = c * (uAberration * (1.0 + r2*2.5));
+      vec2 dir = c * (uAberration * r2 * r2);   // corner-only: center stays clean
       vec3 col;
       col.r = texture2D(tDiffuse, uv + dir).r;
       col.g = texture2D(tDiffuse, uv).g;
@@ -107,8 +107,8 @@ export class Renderer {
     gtao.updatePdMaterial({ lumaPhi: 10, depthPhi: 2, normalPhi: 3, radius: 4, radiusExponent: 1, rings: 2, samples: 16 });
     gtao.blendIntensity = 1.0;
 
-    const bloom = new UnrealBloomPass(size, 0.48, 0.6, 0.9);
-    bloom.threshold = 0.9; bloom.strength = 0.48; bloom.radius = 0.6;
+    const bloom = new UnrealBloomPass(size, 0.3, 0.5, 1.0);
+    bloom.threshold = 1.0; bloom.strength = 0.3; bloom.radius = 0.5;
 
     const bokeh = new BokehPass(scene, camera, { focus: 60.0, aperture: 0.00002, maxblur: 0.004 });
 
@@ -141,17 +141,17 @@ export class Renderer {
       b['aperture'].value = 0.00022;   // shallow DOF through glass
       b['maxblur'].value = 0.011;
       g.uVignette.value = 1.35;
-      g.uAberration.value = 0.0024;
+      g.uAberration.value = 0.009;
       g.uSat.value = 1.15;
-      this.renderer.toneMappingExposure = 1.06;
+      this.renderer.toneMappingExposure = 0.95;
     } else {
       b['focus'].value = focusDist;
       b['aperture'].value = 0.00002;   // near-deep focus at the hip
       b['maxblur'].value = 0.0035;
       g.uVignette.value = 0.9;
-      g.uAberration.value = 0.0014;
+      g.uAberration.value = 0.006;
       g.uSat.value = 1.09;
-      this.renderer.toneMappingExposure = 0.98;
+      this.renderer.toneMappingExposure = 0.88;
     }
   }
 

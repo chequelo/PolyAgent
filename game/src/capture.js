@@ -67,6 +67,7 @@ if (q.get('weapon') === '1') {
   rifle.update(0.016, {});
 }
 
+if (q.get('noshadow') === '1') R.renderer.shadowMap.enabled = false;
 R.build(scene, camera);
 R.setScoped(scoped, camPos.distanceTo(lookAt));
 const focus = q.get('focus');
@@ -74,5 +75,10 @@ if (focus && focus !== 'auto') R.setFocus(parseFloat(focus));
 else R.setFocus(camPos.distanceTo(lookAt));
 
 // render a few frames so temporal passes (SMAA/GTAO) settle
-for (let i = 0; i < 3; i++) R.render();
+if (q.get('raw') === '1') {
+  R.renderer.render(scene, camera); // bypass composer/post
+} else {
+  for (let i = 0; i < 3; i++) R.render();
+}
+window.__scene = scene; window.__THREE = THREE; window.__cam = camera; window.__R = R;
 window.__ready = true;
