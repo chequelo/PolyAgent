@@ -51,4 +51,44 @@ export class HUD {
     d.style.opacity = '1';
     setTimeout(() => { d.style.opacity = '0'; }, 120);
   }
+
+  // ---- Silent Scope arcade HUD ----
+  setTimer(sec) {
+    const m = Math.floor(sec / 60), s = Math.floor(sec % 60);
+    const el = this.$('timer');
+    el.textContent = `${m}:${s.toString().padStart(2, '0')}`;
+    el.classList.toggle('low', sec <= 15);
+  }
+  setTargets(n) { this.$('targetsLeft').textContent = n; }
+
+  combo(mult) {
+    const el = this.$('combo');
+    if (mult < 2) { el.classList.add('hidden'); return; }
+    this.$('comboX').textContent = 'x' + mult;
+    el.classList.remove('hidden', 'show');
+    void el.offsetWidth;
+    el.classList.add('show');
+  }
+
+  criticalShot(bonus) {
+    const xr = this.$('xray'), cr = this.$('critical');
+    this.$('critBonus').textContent = '+' + bonus;
+    for (const el of [xr, cr]) {
+      el.classList.remove('hidden', 'show');
+      void el.offsetWidth;
+      el.classList.add('show');
+    }
+    clearTimeout(this._critT);
+    this._critT = setTimeout(() => { xr.classList.add('hidden'); cr.classList.add('hidden'); }, 950);
+  }
+
+  showResult({ title, score, acc, time, rank }) {
+    this.$('resultTitle').textContent = title;
+    this.$('resultScore').textContent = score;
+    this.$('resultAcc').textContent = acc + '%';
+    this.$('resultTime').textContent = time + 's';
+    this.$('resultRank').textContent = rank;
+    this.$('result').classList.remove('hidden');
+  }
+  hideResult() { this.$('result').classList.add('hidden'); }
 }

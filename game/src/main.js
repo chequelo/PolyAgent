@@ -39,12 +39,20 @@ class Game {
     this.baseFov = 58;
     this.scopeFov = 11;
     this.scoped = false;
-    this.magSize = 5; this.mag = 5; this.reserve = 30;
+    this.magSize = 5; this.mag = 5; this.reserve = 95;
     this.reloading = false;
     this.fireCooldown = 0;
     this.score = 0;
     this.raycaster = new THREE.Raycaster();
     this.raycaster.camera = this.camera; // required when scene contains sprites
+
+    // ---- Silent Scope arcade state ----
+    this.timeLimit = 90; this.timeLeft = this.timeLimit;
+    this.timeScale = 1; this.critRecover = 0; this.critZoom = 0;
+    this.combo = 0; this.comboTimer = 0;
+    this.shotsFired = 0; this.shotsHit = 0;
+    this.totalTargets = this.enemies.enemies.length;
+    this.gameOver = false;
 
     this.clock = new THREE.Clock();
     this.running = false;
@@ -67,6 +75,7 @@ class Game {
   _bindInput() {
     const start = () => this.start();
     document.getElementById('startBtn').addEventListener('click', start);
+    document.getElementById('restartBtn').addEventListener('click', () => this._restart());
 
     document.addEventListener('pointerlockchange', () => {
       const locked = document.pointerLockElement === this.canvas;
@@ -93,6 +102,9 @@ class Game {
     this.audio.init(); this.audio.resume();
     document.getElementById('menu').classList.add('hidden');
     this.canvas.requestPointerLock();
+    this.hud.setTimer(this.timeLeft);
+    this.hud.setTargets(this.enemies.alive.length);
+    this.hud.setAmmo(this.mag, this.reserve);
     if (!this.running) { this.running = true; this.clock.start(); this._loop(); }
   }
   _pause() {
@@ -126,9 +138,10 @@ class Game {
   }
 
   _fire() {
-    if (this.reloading || this.fireCooldown > 0) return;
+    if (this.reloading || this.fireCooldown > 0 || this.gameOver) return;
     if (this.mag <= 0) { this.audio.dryFire(); return; }
     this.mag--;
+    this.shotsFired++;
     this.fireCooldown = 0.9; // bolt-action cadence
     this.rifle.fire();
     this.audio.gunshot();
@@ -144,15 +157,25 @@ class Game {
     const colliderHit = this._raycastWorld(this.raycaster, hit ? hit.distance : Infinity);
 
     if (hit && (!colliderHit || hit.distance < colliderHit.distance)) {
+      this.shotsHit++;
       this.fx.tracer(muzzleWorld, hit.point);
       this.fx.impact(hit.point, this.player.forward().clone().negate(), 'blood');
       const res = hit.enemy.damage(hit.part);
       this.audio.hit(hit.part === 'head');
       this.hud.hitmarker(res.killed);
       if (res.killed) {
-        this.score += hit.part === 'head' ? 150 : 100;
-        this.hud.killfeed(hit.part === 'head' ? 'HEADSHOT' : 'ELIMINATED');
+        this.combo++;
+        this.comboTimer = 3.5;
+        const head = hit.part === 'head';
+        const base = head ? 150 : 100;
+        const gained = base * this.combo;
+        this.score += gained;
+        if (head) this._criticalShot(hit.point, gained);
+        else this.hud.killfeed(this.combo > 1 ? `ELIMINATED  x${this.combo}` : 'ELIMINATED');
+        if (this.combo >= 2) this.hud.combo(this.combo);
         this.audio.impact();
+        this.hud.setTargets(this.enemies.alive.length);
+        if (this.enemies.alive.length === 0) this._endMission(true);
       }
       this.hud.setScore(this.score);
     } else if (colliderHit) {
@@ -195,17 +218,66 @@ class Game {
     }, 1600);
   }
 
+  _criticalShot(point, bonus) {
+    // Silent Scope signature: X-ray flash + slow-mo + banner + camera punch
+    this.timeScale = 0.18;
+    this.critRecover = 1.15;
+    this.critZoom = 1;
+    this.hud.criticalShot(bonus);
+    this.hud.killfeed('CRITICAL SHOT');
+    this.audio.hit(true);
+  }
+
+  _endMission(win) {
+    if (this.gameOver) return;
+    this.gameOver = true;
+    const acc = this.shotsFired ? Math.round((this.shotsHit / this.shotsFired) * 100) : 0;
+    const timeUsed = Math.round(this.timeLimit - this.timeLeft);
+    // rank from score + accuracy + time remaining
+    let rank = 'D';
+    const grade = this.score + acc * 20 + Math.max(0, this.timeLeft) * 30 + (win ? 3000 : 0);
+    if (grade > 12000) rank = 'S'; else if (grade > 9000) rank = 'A';
+    else if (grade > 6000) rank = 'B'; else if (grade > 3500) rank = 'C';
+    if (document.pointerLockElement) document.exitPointerLock();
+    this._setScoped(false);
+    setTimeout(() => this.hud.showResult({
+      title: win ? 'MISSION COMPLETE' : 'MISSION FAILED',
+      score: this.score, acc, time: timeUsed, rank: win ? rank : 'D',
+    }), 900);
+  }
+
+  _restart() {
+    window.location.reload();
+  }
+
   _loop() {
     if (!this.running) return;
     requestAnimationFrame(() => this._loop());
-    const dt = Math.min(this.clock.getDelta(), 0.05);
-    this.fireCooldown = Math.max(0, this.fireCooldown - dt);
+    const rawDt = Math.min(this.clock.getDelta(), 0.05);
 
-    if (this.player.enabled) this.player.update(dt);
+    // slow-mo recovery
+    if (this.critRecover > 0) {
+      this.critRecover -= rawDt;
+      this.timeScale = THREE.MathUtils.damp(this.timeScale, 1, 3, rawDt);
+      this.critZoom = THREE.MathUtils.damp(this.critZoom, 0, 4, rawDt);
+      if (this.critRecover <= 0) { this.timeScale = 1; this.critZoom = 0; }
+    }
+    const dt = rawDt * this.timeScale;
+    this.fireCooldown = Math.max(0, this.fireCooldown - rawDt);
 
-    // smooth FOV for scope zoom
-    const targetFov = this.scoped ? this.scopeFov : this.baseFov;
-    this.camera.fov = THREE.MathUtils.damp(this.camera.fov, targetFov, 14, dt);
+    // mission timer + combo decay (real time)
+    if (!this.gameOver && this.player.enabled) {
+      this.timeLeft = Math.max(0, this.timeLeft - rawDt);
+      this.hud.setTimer(this.timeLeft);
+      if (this.timeLeft <= 0) this._endMission(false);
+      if (this.comboTimer > 0) { this.comboTimer -= rawDt; if (this.comboTimer <= 0) this.combo = 0; }
+    }
+
+    if (this.player.enabled && !this.gameOver) this.player.update(dt);
+
+    // smooth FOV for scope zoom (+ critical-shot punch-in), driven by real time
+    const targetFov = (this.scoped ? this.scopeFov : this.baseFov) * (1 - this.critZoom * 0.16);
+    this.camera.fov = THREE.MathUtils.damp(this.camera.fov, targetFov, 14, rawDt);
     this.camera.updateProjectionMatrix();
 
     this.rifle.update(dt, {

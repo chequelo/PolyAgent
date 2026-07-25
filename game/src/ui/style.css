@@ -77,6 +77,45 @@ canvas#scene{position:absolute;inset:0;width:100%;height:100%;display:block}
 .breath{position:absolute;left:50%;bottom:24%;transform:translateX(-50%);font-size:13px;letter-spacing:3px;color:var(--hud-dim)}
 .breath b{color:#fff}
 
+/* ---------------- Arcade HUD (Silent Scope) ---------------- */
+.hud-top-center{position:absolute;left:50%;top:22px;transform:translateX(-50%);text-align:center;text-shadow:0 2px 8px #000}
+.timer{font-size:40px;font-weight:700;letter-spacing:4px;color:#fff;line-height:1;font-variant-numeric:tabular-nums}
+.timer.low{color:#ff4635;animation:pulse .6s infinite}
+@keyframes pulse{50%{opacity:.5}}
+.targets-left{font-size:13px;letter-spacing:4px;color:var(--hud-dim);margin-top:5px}
+.targets-left #targetsLeft{color:var(--accent);font-weight:700}
+
+.combo{position:absolute;left:50%;top:46%;transform:translateX(-50%);text-align:center;pointer-events:none}
+.combo #comboX{font-size:44px;font-weight:800;color:#ffcf4d;text-shadow:0 0 18px rgba(255,180,40,.8),0 3px 6px #000;font-style:italic}
+.combo .combo-label{display:block;font-size:12px;letter-spacing:6px;color:#ffcf4d;margin-top:-4px}
+.combo.show{animation:comboPop .5s ease-out}
+@keyframes comboPop{0%{opacity:0;transform:translateX(-50%) scale(1.8)}30%{opacity:1}100%{opacity:.9;transform:translateX(-50%) scale(1)}}
+
+/* CRITICAL SHOT X-ray flash */
+.xray{position:absolute;inset:0;z-index:30;pointer-events:none}
+.xray-flash{position:absolute;inset:0;background:radial-gradient(circle at 50% 45%,rgba(200,235,255,.85),rgba(60,140,220,.4) 40%,rgba(0,10,30,0) 72%)}
+.xray-scan{position:absolute;inset:0;background:repeating-linear-gradient(0deg,rgba(180,230,255,.12) 0px,rgba(180,230,255,.12) 2px,transparent 2px,transparent 5px)}
+.xray{opacity:0}
+.xray.show{animation:xrayFlash 1.0s ease-out both}
+@keyframes xrayFlash{0%{opacity:0}10%{opacity:1}45%{opacity:.5}100%{opacity:.12}}
+
+.critical{position:absolute;left:0;right:0;top:34%;z-index:31;text-align:center;pointer-events:none;opacity:0}
+.critical-text{font-size:76px;font-weight:800;font-style:italic;letter-spacing:4px;color:#fff;
+  text-shadow:0 0 30px rgba(120,200,255,.9),0 0 8px #fff,0 4px 10px #000;-webkit-text-stroke:2px rgba(30,90,160,.6)}
+.critical-sub{font-size:20px;letter-spacing:8px;color:#bfe4ff;margin-top:6px;text-shadow:0 2px 6px #000}
+.critical.show{opacity:1;animation:critIn .55s cubic-bezier(.2,1.4,.35,1) both}
+@keyframes critIn{0%{opacity:0;transform:scale(2.2) skewX(-12deg)}55%{opacity:1;transform:scale(.95) skewX(-12deg)}100%{opacity:1;transform:scale(1) skewX(-12deg)}}
+
+/* Mission result */
+.result{position:absolute;inset:0;z-index:45;display:flex;align-items:center;justify-content:center;background:radial-gradient(circle at 50% 40%,rgba(10,16,22,.75),rgba(0,0,0,.92))}
+.result-inner{text-align:center;color:#e8ede8}
+.result h2{font-size:54px;font-weight:800;letter-spacing:6px;margin:0 0 24px;color:var(--accent);text-shadow:0 4px 20px rgba(0,0,0,.7)}
+.result-stats{display:flex;gap:40px;justify-content:center;font-size:15px;letter-spacing:3px;color:var(--hud-dim)}
+.result-stats b{display:block;font-size:30px;color:#fff;margin-top:6px}
+.result-rank{margin:30px 0;font-size:18px;letter-spacing:6px;color:var(--hud-dim)}
+.result-rank span{font-size:80px;font-weight:800;color:#ffcf4d;display:block;text-shadow:0 0 30px rgba(255,180,40,.6)}
+#restartBtn{background:var(--accent);color:#fff;border:none;padding:14px 50px;font-family:var(--font);font-size:20px;font-weight:700;letter-spacing:4px;cursor:pointer;transform:skewX(-10deg)}
+
 /* ---------------- Menu ---------------- */
 .menu{position:absolute;inset:0;z-index:40;display:flex;align-items:center;justify-content:center;
   background:radial-gradient(circle at 50% 40%,rgba(20,26,30,0.55),rgba(0,0,0,0.86));backdrop-filter:blur(3px)}

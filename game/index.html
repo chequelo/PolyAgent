@@ -75,12 +75,47 @@
       </div>
 
       <div class="hud-top-left">
-        <div class="objective">◆ ELIMINATE ALL HOSTILES</div>
+        <div class="objective">◆ ELIMINATE ALL TARGETS</div>
         <div class="score">SCORE <span id="score">0</span></div>
+      </div>
+
+      <!-- Arcade top-center: mission timer + targets remaining -->
+      <div class="hud-top-center">
+        <div class="timer" id="timer">1:30</div>
+        <div class="targets-left">TARGETS <span id="targetsLeft">0</span></div>
+      </div>
+
+      <!-- Combo / bonus -->
+      <div id="combo" class="combo hidden">
+        <span id="comboX">x2</span><span class="combo-label">COMBO</span>
       </div>
 
       <div id="killfeed" class="killfeed"></div>
       <div id="breath" class="breath hidden">HOLD BREATH — <b>SHIFT</b></div>
+    </div>
+
+    <!-- CRITICAL SHOT spectacle (Silent Scope signature) -->
+    <div id="xray" class="xray hidden">
+      <div class="xray-flash"></div>
+      <div class="xray-scan"></div>
+    </div>
+    <div id="critical" class="critical hidden">
+      <div class="critical-text">CRITICAL SHOT!</div>
+      <div class="critical-sub">HEADSHOT · <span id="critBonus">+150</span></div>
+    </div>
+
+    <!-- Mission result -->
+    <div id="result" class="result hidden">
+      <div class="result-inner">
+        <h2 id="resultTitle">MISSION COMPLETE</h2>
+        <div class="result-stats">
+          <div>SCORE <b id="resultScore">0</b></div>
+          <div>ACCURACY <b id="resultAcc">0%</b></div>
+          <div>TIME <b id="resultTime">0s</b></div>
+        </div>
+        <div class="result-rank">RANK <span id="resultRank">A</span></div>
+        <button id="restartBtn">REDEPLOY</button>
+      </div>
     </div>
 
     <!-- Start / pause menu -->
