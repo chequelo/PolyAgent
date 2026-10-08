@@ -78,9 +78,7 @@ class Game {
     document.getElementById('restartBtn').addEventListener('click', () => this._restart());
 
     document.addEventListener('pointerlockchange', () => {
-      const locked = document.pointerLockElement === this.canvas;
-      this.player.enabled = locked;
-      if (!locked && this.running) this._pause();
+      this.player.locked = document.pointerLockElement === this.canvas;
     });
 
     this.canvas.addEventListener('mousedown', (e) => {
@@ -101,13 +99,17 @@ class Game {
   start() {
     this.audio.init(); this.audio.resume();
     document.getElementById('menu').classList.add('hidden');
-    this.canvas.requestPointerLock();
+    try { this.canvas.requestPointerLock && this.canvas.requestPointerLock(); } catch (e) {}
+    this.player.enabled = true;          // runs with or without pointer lock
+    this.canvas.style.cursor = 'none';
     this.hud.setTimer(this.timeLeft);
     this.hud.setTargets(this.enemies.alive.length);
     this.hud.setAmmo(this.mag, this.reserve);
     if (!this.running) { this.running = true; this.clock.start(); this._loop(); }
   }
   _pause() {
+    this.player.enabled = false;
+    this.canvas.style.cursor = 'default';
     document.getElementById('menu').classList.remove('hidden');
     document.querySelector('#menu h1').innerHTML = 'PAUSED';
     document.getElementById('startBtn').textContent = 'RESUME';

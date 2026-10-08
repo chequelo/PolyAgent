@@ -31,6 +31,10 @@ export class Player {
 
     this.keys = {};
     this.lookDelta = { x: 0, y: 0 };
+    this.locked = false;                 // pointer-lock active?
+    this.mouseX = innerWidth / 2;
+    this.mouseY = innerHeight / 2;
+    this.fallbackPan = 2.4;              // rad/s at screen edge when unlocked
     this._bind();
   }
 
@@ -46,7 +50,8 @@ export class Player {
     window.addEventListener('keyup', this._ku);
 
     this._mm = (e) => {
-      if (!this.enabled) return;
+      this.mouseX = e.clientX; this.mouseY = e.clientY;
+      if (!this.enabled || !this.locked) return;
       const mul = this.scoped ? this.scopedSensMul : 1;
       const s = this.baseSens * mul;
       this.yaw -= e.movementX * s;
@@ -55,6 +60,22 @@ export class Player {
       this.lookDelta.x = e.movementX; this.lookDelta.y = e.movementY;
     };
     window.addEventListener('mousemove', this._mm);
+  }
+
+  // cursor-position look used when pointer lock is unavailable (e.g. in an iframe)
+  _fallbackLook(dt) {
+    const mul = this.scoped ? this.scopedSensMul : 1;
+    const cx = innerWidth / 2, cy = innerHeight / 2;
+    const dz = 0.14; // deadzone fraction
+    let nx = (this.mouseX - cx) / cx;
+    let ny = (this.mouseY - cy) / cy;
+    const ax = Math.sign(nx) * Math.max(0, Math.abs(nx) - dz) / (1 - dz);
+    const ay = Math.sign(ny) * Math.max(0, Math.abs(ny) - dz) / (1 - dz);
+    const pan = this.fallbackPan * mul;
+    this.yaw -= ax * ax * Math.sign(ax) * pan * dt;
+    this.pitch -= ay * ay * Math.sign(ay) * pan * dt;
+    this.pitch = THREE.MathUtils.clamp(this.pitch, -Math.PI / 2 + 0.05, Math.PI / 2 - 0.05);
+    this.lookDelta.x = ax * 8; this.lookDelta.y = ay * 8;
   }
 
   setScoped(s) { this.scoped = s; }
@@ -79,6 +100,7 @@ export class Player {
   }
 
   update(dt) {
+    if (this.enabled && !this.locked) this._fallbackLook(dt);
     // ---- desired movement (camera-relative on XZ) ----
     const fwd = new THREE.Vector3(-Math.sin(this.yaw), 0, -Math.cos(this.yaw));
     const right = new THREE.Vector3(Math.cos(this.yaw), 0, -Math.sin(this.yaw));

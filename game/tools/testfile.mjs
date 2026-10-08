@@ -1,0 +1,10 @@
+import { chromium } from 'playwright';
+const b = await chromium.launch({ executablePath:'/opt/pw-browsers/chromium', args:['--use-gl=angle','--use-angle=swiftshader','--enable-unsafe-swiftshader','--ignore-gpu-blocklist','--no-sandbox','--disable-dev-shm-usage','--mute-audio']});
+const p = await b.newPage({viewport:{width:1280,height:720}});
+const msgs=[]; p.on('console',m=>msgs.push('['+m.type()+'] '+m.text().slice(0,200))); p.on('pageerror',e=>msgs.push('[PAGEERR] '+e.message.slice(0,200)));
+await p.goto('file://'+process.cwd()+'/dist/standalone.html',{waitUntil:'load',timeout:30000});
+await p.waitForTimeout(2500);
+const has = await p.evaluate(()=>!!(window.__game));
+console.log('has __game:', has);
+console.log(msgs.slice(0,15).join('\n'));
+await b.close();
